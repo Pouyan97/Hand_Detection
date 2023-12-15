@@ -8,7 +8,7 @@ schema = dj.schema("Hand_Detection")
 
 
 @schema
-def handBboxMethodLookUp(dj.LookUp):
+class handBboxMethodLookUp(dj.LookUp):
     definition = """
     detection_method      : int
     ---
@@ -19,7 +19,7 @@ def handBboxMethodLookUp(dj.LookUp):
     ]
 
 @schema
-def handBboxMethd(dj.Manual):
+class handBboxMethod(dj.Manual):
     definition = """
     -> SingleCameraVideo
     -> CalibratedRecording
@@ -30,22 +30,23 @@ def handBboxMethd(dj.Manual):
 
 
 @schema
-def handBbox(dj.Computed):
+class handBbox(dj.Computed):
     definition = """
-    -> SingleCameraVideo
-    -> CalibratedRecording
-    -> handBboxMethodLookUp
+    -> handBboxMethod
     detection_method   : int
     ---
     num_boxes   :   int
-    Bboxes      :   longblob
+    bboxes      :   longblob
     """   
     def make(self,key):
-        video = SingleCameraVideo.get_robust_reader(key, return_cap=False)
-        # bboxes = my_method process the video()
+        if (handBboxMethodLookUp & key).fetch1("lifting_method_name") == "RTMDet":
+            from wrappers.hand_bbox import mmpose_hand_det
+            bboxes = mmpose_hand_det(key=key, method="RTMDet")
+            key["Bboxes"] = bboxes
+        self.insert1(key)
 
 @schema
-def handPoseEstimationMethodLookUp(dj.LookUp):
+class handPoseEstimationMethodLookUp(dj.LookUp):
     definition = """
     estimation_method      : int
     ---
@@ -56,7 +57,7 @@ def handPoseEstimationMethodLookUp(dj.LookUp):
     ]
 
 @schema
-def handPoseEstimationMethd(dj.Manual):
+class handPoseEstimationMethod(dj.Manual):
     definition = """
     -> handBbox
     -> handPoseEstimationMethodLookUp
@@ -65,12 +66,16 @@ def handPoseEstimationMethd(dj.Manual):
 
 
 @schema
-def handPoseEstimation(dj.Computed):
+class handPoseEstimation(dj.Computed):
     definition = """
-    -> handPoseEstimationMethodLookUp
+    -> handPoseEstimationMethod
     ---
     keypoints_2d       : longblob
     """   
     def make(self,key):
-        video = SingleCameraVideo.get_robust_reader(key, return_cap=False)
-        # keypoints = my_method process the video()
+        if (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "RTMPose":
+            from wrappers.hand_estimation import mmpose_HPE
+            key["keypoints_2d"] = mmpose_HPE(key, 'RTMPose')
+        
+        
+        self.insert1(key)
