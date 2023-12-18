@@ -4,11 +4,11 @@ import numpy as np
 from multi_camera.datajoint.multi_camera_dj import MultiCameraRecording, SingleCameraVideo #, PersonReconstruction
 
 
-schema = dj.schema("Hand_Detection")
+schema = dj.schema("hand_detection")
 
 
 @schema
-class handBboxMethodLookUp(dj.LookUp):
+class HandBboxMethodLookup(dj.Lookup):
     definition = """
     detection_method      : int
     ---
@@ -19,34 +19,31 @@ class handBboxMethodLookUp(dj.LookUp):
     ]
 
 @schema
-class handBboxMethod(dj.Manual):
+class HandBboxMethod(dj.Manual):
     definition = """
     -> SingleCameraVideo
-    -> CalibratedRecording
-    -> handBboxMethodLookUp
-    detection_method   : int
+    -> HandBboxMethodLookup
     ---
     """
 
 
 @schema
-class handBbox(dj.Computed):
+class HandBbox(dj.Computed):
     definition = """
-    -> handBboxMethod
-    detection_method   : int
+    -> HandBboxMethod
     ---
     num_boxes   :   int
     bboxes      :   longblob
     """   
     def make(self,key):
-        if (handBboxMethodLookUp & key).fetch1("lifting_method_name") == "RTMDet":
+        if (HandBboxMethodLookup & key).fetch1("lifting_method_name") == "RTMDet":
             from wrappers.hand_bbox import mmpose_hand_det
             bboxes = mmpose_hand_det(key=key, method="RTMDet")
             key["bboxes"] = bboxes
         self.insert1(key)
 
 @schema
-class handPoseEstimationMethodLookUp(dj.LookUp):
+class HandPoseEstimationMethodLookup(dj.Lookup):
     definition = """
     estimation_method      : int
     ---
@@ -60,32 +57,32 @@ class handPoseEstimationMethodLookUp(dj.LookUp):
     ]
 
 @schema
-class handPoseEstimationMethod(dj.Manual):
+class HandPoseEstimationMethod(dj.Manual):
     definition = """
-    -> handBbox
-    -> handPoseEstimationMethodLookUp
+    -> HandBbox
+    -> HandPoseEstimationMethodLookup
     ---
     """
 
 
 @schema
-class handPoseEstimation(dj.Computed):
+class HandPoseEstimation(dj.Computed):
     definition = """
-    -> handPoseEstimationMethod
+    -> HandPoseEstimationMethod
     ---
     keypoints_2d       : longblob
     """   
     def make(self,key):
-        if (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "RTMPoseHand5":
+        if (HandPoseEstimationMethodLookup & key).fetch1("estimation_method_name") == "RTMPoseHand5":
             from wrappers.hand_estimation import mmpose_HPE
             key["keypoints_2d"] = mmpose_HPE(key, 'RTMPoseHand5')
-        elif (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "RTMPoseCOCO":
+        elif (HandPoseEstimationMethodLookup & key).fetch1("estimation_method_name") == "RTMPoseCOCO":
             from wrappers.hand_estimation import mmpose_HPE
             key["keypoints_2d"] = mmpose_HPE(key, 'RTMPoseCOCO')
-        elif (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "freihand":
+        elif (HandPoseEstimationMethodLookup & key).fetch1("estimation_method_name") == "freihand":
             from wrappers.hand_estimation import mmpose_HPE
             key["keypoints_2d"] = mmpose_HPE(key, 'freihand')
-        elif (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "HRNet_dark":
+        elif (HandPoseEstimationMethodLookup & key).fetch1("estimation_method_name") == "HRNet_dark":
             from wrappers.hand_estimation import mmpose_HPE
             key["keypoints_2d"] = mmpose_HPE(key, 'HRNet_dark')
         
