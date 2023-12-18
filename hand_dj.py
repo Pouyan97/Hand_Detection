@@ -42,7 +42,7 @@ class handBbox(dj.Computed):
         if (handBboxMethodLookUp & key).fetch1("lifting_method_name") == "RTMDet":
             from wrappers.hand_bbox import mmpose_hand_det
             bboxes = mmpose_hand_det(key=key, method="RTMDet")
-            key["Bboxes"] = bboxes
+            key["bboxes"] = bboxes
         self.insert1(key)
 
 @schema
@@ -53,7 +53,10 @@ class handPoseEstimationMethodLookUp(dj.LookUp):
     estimation_method_name : varchar(50)
     """
     contents = [
-        {"estimation_method": 0, "estimation_method_name": "RTMPose"},
+        {"estimation_method": 0, "estimation_method_name": "RTMPoseHand5"},
+        {"estimation_method": 1, "estimation_method_name": "RTMPoseCOCO"},
+        {"estimation_method": 2, "estimation_method_name": "freihand"},
+        {"estimation_method": 3, "estimation_method_name": "HRNet_dark"},
     ]
 
 @schema
@@ -73,9 +76,18 @@ class handPoseEstimation(dj.Computed):
     keypoints_2d       : longblob
     """   
     def make(self,key):
-        if (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "RTMPose":
+        if (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "RTMPoseHand5":
             from wrappers.hand_estimation import mmpose_HPE
-            key["keypoints_2d"] = mmpose_HPE(key, 'RTMPose')
+            key["keypoints_2d"] = mmpose_HPE(key, 'RTMPoseHand5')
+        elif (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "RTMPoseCOCO":
+            from wrappers.hand_estimation import mmpose_HPE
+            key["keypoints_2d"] = mmpose_HPE(key, 'RTMPoseCOCO')
+        elif (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "freihand":
+            from wrappers.hand_estimation import mmpose_HPE
+            key["keypoints_2d"] = mmpose_HPE(key, 'freihand')
+        elif (handPoseEstimationMethodLookUp & key).fetch1("estimation_method_name") == "HRNet_dark":
+            from wrappers.hand_estimation import mmpose_HPE
+            key["keypoints_2d"] = mmpose_HPE(key, 'HRNet_dark')
         
         
         self.insert1(key)
