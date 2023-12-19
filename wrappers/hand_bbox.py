@@ -19,9 +19,9 @@ def mmpose_hand_det(key, method='RTMDet'):
     video =  Video.get_robust_reader(key, return_cap=False) # returning video allows deleting it
 
     if method == 'RTMDet':
-        detection_cfg = 'models/mmdetection_cfg/rtmdet_nano_320-8xb32_hand.py'
+        detection_cfg = 'wrappers/models/rtmdet_nano_320-8xb32_hand.py'
         detection_ckpt = 'https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmdet_nano_8xb32-300e_hand-267f9c8f.pth'
-        device = 'cuda'
+        device = 'cpu'
 
     # build detector
     detector = init_detector(detection_cfg, detection_ckpt, device=device)
@@ -32,6 +32,7 @@ def mmpose_hand_det(key, method='RTMDet'):
     video_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     boxes_list = []
+    num_boxes = 0
     # iterate trough frames
     for frame_id in range(video_length):
         ret, frame = cap.read()
@@ -49,10 +50,11 @@ def mmpose_hand_det(key, method='RTMDet'):
         #expand bboxes by 100 pixels
         bboxes[:,:2] -= 100
         bboxes[:,-2:] += 100
-
+        if(bboxes.shape[0] > num_boxes):
+            num_boxes = bboxes.shape[0]
         boxes_list.append(bboxes)
 
     cap.release()
     os.remove(video)
 
-    return boxes_list
+    return num_boxes, boxes_list

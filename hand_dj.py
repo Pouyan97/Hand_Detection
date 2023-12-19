@@ -36,10 +36,11 @@ class HandBbox(dj.Computed):
     bboxes      :   longblob
     """   
     def make(self,key):
-        if (HandBboxMethodLookup & key).fetch1("lifting_method_name") == "RTMDet":
+        if (HandBboxMethodLookup & key).fetch1("detection_method_name") == "RTMDet":
             from wrappers.hand_bbox import mmpose_hand_det
-            bboxes = mmpose_hand_det(key=key, method="RTMDet")
+            num_boxes, bboxes = mmpose_hand_det(key=key, method="RTMDet")
             key["bboxes"] = bboxes
+            key["num_boxes"] = num_boxes
         self.insert1(key)
 
 @schema
@@ -88,3 +89,37 @@ class HandPoseEstimation(dj.Computed):
         
         
         self.insert1(key)
+
+
+        
+# @schema
+# class HandPoseEstimationVideo(dj.Computed):
+#     definition = """
+#     -> HandPoseEstimation
+#     ---
+#     output_video      : attach@localattach    # datajoint managed video file
+#     """   
+#     def make(self,key):
+#         import os
+#         import tempfile
+#         import numpy as np
+#         from pose_pipeline.pipeline import VideoInfo
+#         from mmpose.registry import VISUALIZERS
+
+#          # build visualizer
+#         visualizer = VISUALIZERS.build(pose_estimator.cfg.visualizer)
+#         # the dataset_meta is loaded from the checkpoint and
+#         # then pass to the model in init_pose_estimator
+#         visualizer.set_dataset_meta(
+#         pose_estimator.dataset_meta)
+#         method_name = (HandPoseEstimationMethod & key).fetch1("estimation_method_name")
+#         fd, out_file_name = tempfile.mkstemp(suffix=".mp4")
+#         os.close(fd)
+
+#         fps = np.unique((VideoInfo * SingleCameraVideo & key).fetch("fps"))[0]
+#         # fps = np.round(fps)[0]
+
+#         keypoints3d = (HandPoseEstimation & key).fetch1("keypoints2d")
+
+#         key["output_video"] = out_file_name
+#         self.insert1(key)
