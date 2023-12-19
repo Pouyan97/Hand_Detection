@@ -100,26 +100,34 @@ class HandPoseEstimation(dj.Computed):
 #     output_video      : attach@localattach    # datajoint managed video file
 #     """   
 #     def make(self,key):
-#         import os
-#         import tempfile
-#         import numpy as np
-#         from pose_pipeline.pipeline import VideoInfo
-#         from mmpose.registry import VISUALIZERS
-
-#          # build visualizer
-#         visualizer = VISUALIZERS.build(pose_estimator.cfg.visualizer)
-#         # the dataset_meta is loaded from the checkpoint and
-#         # then pass to the model in init_pose_estimator
-#         visualizer.set_dataset_meta(
-#         pose_estimator.dataset_meta)
-#         method_name = (HandPoseEstimationMethod & key).fetch1("estimation_method_name")
+        # keypoints = (HandPoseEstimation & key).fetch1("keypoints2d")
+        # vid_file = (Video & key).fetch('video')[0]        
+        # keypoints_2d = (HandPoseEstimation & vid_file).fetch1("keypoints_2d")
 #         fd, out_file_name = tempfile.mkstemp(suffix=".mp4")
 #         os.close(fd)
+        # def render_video(video, output_file, keypoints):
+        #     cap = cv2.VideoCapture(video)
+        #     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        #     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        #     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        #     fps = cap.get(cv2.CAP_PROP_FPS)
+        #     output_size = (int(w),int(h))
 
-#         fps = np.unique((VideoInfo * SingleCameraVideo & key).fetch("fps"))[0]
-#         # fps = np.round(fps)[0]
+        #     fourcc = cv2.VideoWriter_fourcc(*"MP4V")
+        #     out = cv2.VideoWriter(output_file,fourcc, fps,output_size)
 
-#         keypoints3d = (HandPoseEstimation & key).fetch1("keypoints2d")
+        #     for frame_idx in tqdm(range(total_frames)):
+        #         success, frame = cap.read()
+
+        #         if not success:
+        #             break
+        #         keypoints = keypoints[frame_idx,:,:].copy()
+        #         frame = draw_keypoints(frame,keypoints)
+        #         out.write(frame)
+
+        #     out.release()
+        #     cap.release()
+        # os.remove(vid_file)
 
 #         key["output_video"] = out_file_name
 #         self.insert1(key)
