@@ -4,6 +4,7 @@ import numpy as np
 import datajoint as dj
 from pose_pipeline import Video
 from hand_dj import HandBbox
+from tqdm import tqdm
 
 def mmpose_HPE(key, method='RTMPoseHand5'):
 
@@ -41,7 +42,7 @@ def mmpose_HPE(key, method='RTMPoseHand5'):
     # video_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     # fps = cap.get(cv2.CAP_PROP_FPS)
     results = []
-    for bbox in bboxes:
+    for bbox in tqdm(bboxes):
         ret, frame = cap.read()
         assert ret and frame is not None
         # handle the case where hand is not detected
@@ -50,18 +51,60 @@ def mmpose_HPE(key, method='RTMPoseHand5'):
             continue
         #run the frame through the model
         pose_results = inference_topdown(model, frame, bbox)
+        ##
+        #Pose_results includes the number of detections
+        #pred_instances includes the scores as well as keypoint
+        #
         #get prediction instances from mmpose results
-        ################CHOOSE THE FIRST BOX AND SET OF KEYPOINTS#################
         #>>>>>>>>>>>>>>> HARD CODED <<<<<<<<<<<<<<<#
-        pred_instances = pose_results[0].pred_instances
-        keypoints = pred_instances.keypoints
-        keypoint_scores = pred_instances.keypoint_scores
-        # print(keypoints[0,:,:].shape,keypoint_scores.T.shape)
-        #concat scores and keypoints
-        results.append(np.concatenate((keypoints[0,:,:],keypoint_scores.T), axis = -1))
+        num_hands = len(pose_results)
+        keypoints_2d =[]
+        for i in range(num_hands):
+            pred_instances = pose_results[i].pred_instances
+            keypoints = pred_instances.keypoints
+            keypoint_scores = pred_instances.keypoint_scores
+            keypoints_2d.append(np.concatenate((keypoints[0,:,:],keypoint_scores.T), axis = -1))
+        # print(keypoints.shape,keypoint_scores.T.shape,len(pose_results), len(bbox))
+        #concat scores and keypoints(flatten)
+        results.append(keypoints_2d)
 
 
     cap.release()
     os.remove(video)
 
-    return np.asarray(results)
+    return results
+
+
+
+def overlay_hand_keypoints(video, output_file, keypoints):
+        """Process a video and create overlay of keypoints
+
+        Args:
+        video (str): filename for source (from key)
+        output_file (str): output filename
+        keypoints (list): list of list of keypoints
+        """
+        from pose_pipeline.utils.visualization import draw_keypoints
+        
+        #Get video details
+        cap = cv2.VideoCapture(video)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        output_size = (int(w),int(h))
+        #set writer
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(output_file,fourcc, fps,output_size)
+        #process every frame
+        for frame_idx in tqdm(range(total_frames)):
+            success, frame = cap.read()
+            if not success:
+                break
+            for k in keypoints[frame_idx]:
+                keypoints_2d = k[:,:]
+                frame = draw_keypoints(frame,keypoints_2d)
+            out.write(frame)
+        #remove
+        out.release()
+        cap.release()

@@ -92,42 +92,28 @@ class HandPoseEstimation(dj.Computed):
 
 
         
-# @schema
-# class HandPoseEstimationVideo(dj.Computed):
-#     definition = """
-#     -> HandPoseEstimation
-#     ---
-#     output_video      : attach@localattach    # datajoint managed video file
-#     """   
-#     def make(self,key):
-        # keypoints = (HandPoseEstimation & key).fetch1("keypoints2d")
-        # vid_file = (Video & key).fetch('video')[0]        
-        # keypoints_2d = (HandPoseEstimation & vid_file).fetch1("keypoints_2d")
-#         fd, out_file_name = tempfile.mkstemp(suffix=".mp4")
-#         os.close(fd)
-        # def render_video(video, output_file, keypoints):
-        #     cap = cv2.VideoCapture(video)
-        #     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        #     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        #     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        #     fps = cap.get(cv2.CAP_PROP_FPS)
-        #     output_size = (int(w),int(h))
+@schema
+class HandPoseEstimationVideo(dj.Computed):
+    definition = """
+    -> HandPoseEstimation
+    ---
+    output_video      : attach@localattach    # datajoint managed video file
+    """   
+    def make(self,key):
+        from wrappers.hand_estimation import overlay_hand_keypoints
+        import os
+        import tempfile
+        from pose_pipeline.pipeline import Video
 
-        #     fourcc = cv2.VideoWriter_fourcc(*"MP4V")
-        #     out = cv2.VideoWriter(output_file,fourcc, fps,output_size)
-
-        #     for frame_idx in tqdm(range(total_frames)):
-        #         success, frame = cap.read()
-
-        #         if not success:
-        #             break
-        #         keypoints = keypoints[frame_idx,:,:].copy()
-        #         frame = draw_keypoints(frame,keypoints)
-        #         out.write(frame)
-
-        #     out.release()
-        #     cap.release()
-        # os.remove(vid_file)
-
-#         key["output_video"] = out_file_name
-#         self.insert1(key)
+        keypoints = (HandPoseEstimation & key).fetch1("keypoints_2d")
+        vid_file = (Video & key).fetch1('video')      
+        fd, out_file_name = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+        
+        overlay_hand_keypoints(vid_file, out_file_name, keypoints.copy())
+        
+        key["output_video"] = out_file_name
+        self.insert1(key)
+        #remove videos fetched
+        os.remove(out_file_name)
+        os.remove(vid_file)
