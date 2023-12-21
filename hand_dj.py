@@ -2,7 +2,7 @@ import datajoint as dj
 import numpy as np
 
 from multi_camera.datajoint.multi_camera_dj import MultiCameraRecording, SingleCameraVideo #, PersonReconstruction
-
+from pose_pipeline.pipeline import TopDownPerson
 
 schema = dj.schema("hand_detection")
 
@@ -16,6 +16,8 @@ class HandBboxMethodLookup(dj.Lookup):
     """
     contents = [
         {"detection_method": 0, "detection_method_name": "RTMDet"},
+        {"detection_method": 1, "detection_method_name": "TopDown"},
+        
     ]
 
 @schema
@@ -39,6 +41,13 @@ class HandBbox(dj.Computed):
         if (HandBboxMethodLookup & key).fetch1("detection_method_name") == "RTMDet":
             from wrappers.hand_bbox import mmpose_hand_det
             num_boxes, bboxes = mmpose_hand_det(key=key, method="RTMDet")
+            key["bboxes"] = bboxes
+            key["num_boxes"] = num_boxes
+        if (HandBboxMethodLookup & key).fetch1("detection_method_name") == "TopDown":
+           
+            from wrappers.hand_bbox import make_bbox_from_keypoints
+            keypoints = (TopDownPerson & key & "top_down_method=2").fetch1("keypoints")
+            num_boxes, bboxes = make_bbox_from_keypoints(keypoints)
             key["bboxes"] = bboxes
             key["num_boxes"] = num_boxes
         self.insert1(key)

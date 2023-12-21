@@ -40,12 +40,14 @@ def mmpose_hand_det(key, method='RTMDet'):
         #get detection results
         det_result = inference_detector(detector, frame)
         pred_instance = det_result.pred_instances.cpu().numpy()
-        #calculate bboxes
+
+        #calculate bboxes confidences
         bboxes = np.concatenate(
             (pred_instance.bboxes, pred_instance.scores[:, None]), axis=1)
-
+        #capture bboxes with higher than 0.3 score
         bboxes = bboxes[np.logical_and(pred_instance.labels == 0,
                                     pred_instance.scores > .3)]
+        #overlap highest scoring boxes to get cohesive boxes
         bboxes = bboxes[nms(bboxes, .3), :4]
         #expand bboxes by 100 pixels
         bboxes[:,:2] -= 100
@@ -58,3 +60,36 @@ def mmpose_hand_det(key, method='RTMDet'):
     os.remove(video)
 
     return num_boxes, boxes_list
+
+
+def extract_xy_min_max(points, width, height):
+    # for point in points:
+    xmin = points[:,0] - width / 2
+    xmin_min = np.min(xmin)
+
+    xmax = points[:,0] + width / 2
+    xmax_max = np.max(xmax)
+
+    ymin = points[:,1] - height / 2
+    ymin_min = np.min(ymin)
+
+    ymax = points[:,1] + height / 2
+    ymax_max = np.max(ymax)
+
+    return np.asarray([xmin_min, ymin_min, xmax_max, ymax_max])
+
+def make_bbox_from_keypoints(
+        keypoints=[],
+        width = 50,
+        height = 50,
+        ):
+    right_hand_keypoints = keypoints[:,-21:,:2]
+    left_hand_keypoints = keypoints[:,-42:-21,:2]
+    # Create a bounding box for each point on keypoints
+    bboxes = []
+    for i in range(keypoints.shape[0]):
+        right_hand_bboxes = extract_xy_min_max(right_hand_keypoints[i], width, height)
+        left_hand_bboxes = extract_xy_min_max(left_hand_keypoints[i], width, height)
+        bboxes.append([right_hand_bboxes,left_hand_bboxes])
+
+    return 2, bboxes

@@ -56,7 +56,6 @@ def mmpose_HPE(key, method='RTMPoseHand5'):
         #pred_instances includes the scores as well as keypoint
         #
         #get prediction instances from mmpose results
-        #>>>>>>>>>>>>>>> HARD CODED <<<<<<<<<<<<<<<#
         num_hands = len(pose_results)
         keypoints_2d =[]
         for i in range(num_hands):
