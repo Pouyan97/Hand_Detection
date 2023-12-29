@@ -146,14 +146,14 @@ class HandPoseReconstructionMethodLookup(dj.Lookup):
     """
     contents = [
         {"reconstruction_method": 0, "reconstruction_method_name": "Robust Triangulation"},
+        {"reconstruction_method": 1, "reconstruction_method_name": r"Robust Triangulation $\\sigma=100$"},
+        {"reconstruction_method": 2, "reconstruction_method_name": r"Robust Triangulation $\\sigma=50$"},
+        {"reconstruction_method": 3, "reconstruction_method_name": r"Robust Triangulation $\\gamma=0.3$"},
         # {"reconstruction_method": 1, "reconstruction_method_name": "Explicit Optimization KP Conf, MaxHuber=10"},
         # {"reconstruction_method": 2, "reconstruction_method_name": "Implicit Optimization KP Conf, MaxHuber=10"},
         # {"reconstruction_method": 3, "reconstruction_method_name": "Implicit Optimization"},
         # {"reconstruction_method": 4, "reconstruction_method_name": "Triangulation"},
-        # {"reconstruction_method": 5, "reconstruction_method_name": r"Robust Triangulation $\\sigma=100$"},
-        # {"reconstruction_method": 6, "reconstruction_method_name": r"Robust Triangulation $\\sigma=50$"},
         # {"reconstruction_method": 7, "reconstruction_method_name": "Explicit Optimization"},
-        # {"reconstruction_method": 8, "reconstruction_method_name": r"Robust Triangulation $\\gamma=0.3$"},
         # {"reconstruction_method": 9, "reconstruction_method_name": "Implicit Optimization KP Conf"},
         # {"reconstruction_method": 10, "reconstruction_method_name": r"Implicit Optimization $\\gamma=0.3$"},
         # {"reconstruction_method": 11, "reconstruction_method_name": "Implicit Optimization, MaxHuber=10"},
@@ -228,6 +228,23 @@ class HandPoseReconstruction(dj.Computed):
 
         if reconstruction_method_name == "Robust Triangulation":
             points3d, camera_weights = robust_triangulate_points(camera_calibration, points2d, return_weights=True)
+        elif reconstruction_method_name == "Robust Triangulation $\sigma=100$":
+            points3d, camera_weights = robust_triangulate_points(
+                camera_calibration, points2d, return_weights=True, sigma=100
+            )
+
+        elif reconstruction_method_name == "Robust Triangulation $\sigma=50$":
+            points3d, camera_weights = robust_triangulate_points(
+                camera_calibration, points2d, return_weights=True, sigma=50
+            )
+
+        elif reconstruction_method_name == "Robust Triangulation $\gamma=0.3$":
+            points3d, camera_weights = robust_triangulate_points(
+                camera_calibration, points2d, return_weights=True, threshold=0.3
+            )
+        
+        
+        
         key["keypoints3d"] = np.array(points3d)
         key["camera_weights"] = np.array(camera_weights)
         key["reprojection_loss"] = reprojection_loss(camera_calibration, points2d, points3d[:, :, :3], huber_max=100)
