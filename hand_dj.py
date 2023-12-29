@@ -100,6 +100,14 @@ class HandPoseEstimation(dj.Computed):
         
         self.insert1(key)
 
+    @staticmethod
+    def joint_names(method="RTMPoseHand5"):
+        if method == "RTMPoseHand5" or method == "RTMPoseCOCO" or method == "freihand" or method=="HRNet_dark":
+            return ['Wrist','CMC1','MCP1','IP1','TIP1','MCP2','PIP2',
+        'DIP2', 'TIP2', 'MCP3', 'PIP3', 'DIP3','TIP3', 'MCP4',
+        'PIP4', 'DIP4', 'TIP4', 'MCP5', 'PIP5','DIP5', 'TIP5'
+        ]
+
 
 
 @schema
@@ -225,4 +233,94 @@ class HandPoseReconstruction(dj.Computed):
         key["reprojection_loss"] = reprojection_loss(camera_calibration, points2d, points3d[:, :, :3], huber_max=100)
 
         self.insert1(key, allow_direct_insert=True)
+    
+    def points3d_to_trc(self, points3d, filename, marker_names, fps=30, rotMatrix=np.eye(3)):
+        import pandas as pd
+        '''
+        Exports a set of points into an OpenSim TRC file
+
+        Modified from Pose2Sim.make_trc
+
+        Parameters:
+            points3d (np.array) : time X joints X 3 array
+            filename (string) : file to export to
+            marker_names (list of strings) : names of markers to annotate
+            fps : frame rate of points
+        '''
+
+        assert len(marker_names) == points3d.shape[1], "Number of marker names must match number of points"
+        f_range = [0, points3d.shape[0]]
+
+        # flatten keypoints after reordering axes
+        points3d = np.take(points3d, [1, 2, 0], axis=-1)
+        points3d = points3d.reshape([points3d.shape[0], -1])
+        for m in range(len(marker_names)):
+            points3d[:,(m*3):(m*3+3)] = points3d[:,(m*3):(m*3+3)]@rotMatrix
+        #Header
+        DataRate = CameraRate = OrigDataRate = fps
+        NumFrames = points3d.shape[0]
+        NumMarkers = len(marker_names)
+        header_trc = ['PathFileType\t4\t(X/Y/Z)\t' + filename,
+                'DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames',
+                '\t'.join(map(str,[DataRate, CameraRate, NumFrames, NumMarkers, 'm', OrigDataRate, f_range[0], f_range[1]])),
+                'Frame#\tTime\t' + '\t\t\t'.join(marker_names) + '\t\t',
+                '\t\t'+'\t'.join([f'X{i+1}\tY{i+1}\tZ{i+1}' for i in range(len(marker_names))])]
+
+        #Add Frame# and Time columns
+        Q = pd.DataFrame(points3d)
+        Q.insert(0, 't', Q.index / fps)
+
+        #Write file
+        with open(filename, 'w') as trc_o:
+            [trc_o.write(line+'\n') for line in header_trc]
+            Q.to_csv(trc_o, sep='\t', index=True, header=None, lineterminator='\n')
+
+        return Q
         
+    def export_trc(self, filename, z_offset=0, start=None, end=None, return_points=False, smooth=False):
+        """Export an OpenSim file of marker trajectories
+
+        Params:
+            filename (string) : filename to export to
+            z_offset (float, optional) : optional vertical offset
+            start    (float, optional) : if set, time to start at
+            end      (float, optional) : if set, time to end at
+            return_points (bool, opt)  : if true, return points
+        """
+
+        from pose_pipeline import  VideoInfo
+        from multi_camera.analysis.biomechanics.opensim import normalize_marker_names
+
+        method_name = (HandPoseEstimationMethodLookup & self).fetch1("estimation_method_name")
+        joint_names = HandPoseEstimation.joint_names(method_name)
+
+        joints3d = self.fetch1("keypoints3d").copy()
+        joints3d = joints3d[:, : len(joint_names)]  # discard "unnamed" joints
+        joints3d = joints3d / 1000.0  # convert to m
+        fps = np.unique((VideoInfo * SingleCameraVideo * MultiCameraRecording & self).fetch("fps"))
+
+        if joints3d.shape[-1] == 4:
+            joints3d = joints3d[..., :-1]
+
+        if end is not None:
+            joints3d = joints3d[: int(end * fps)]
+        if start is not None:
+            joints3d = joints3d[int(start * fps) :]
+        if smooth:
+            import scipy
+
+            for i in range(joints3d.shape[1]):
+                for j in range(joints3d.shape[2]):
+                    joints3d[:, i, j] = scipy.signal.medfilt(joints3d[:, i, j], 5)
+        #ROTATE ALONG THE Y AXIS
+        theta = np.pi
+        # transformX = np.array(([1, 0, 0],[0, np.cos(theta), -np.sin(theta)],[0,np.sin(theta), np.cos(theta)]))
+        transformY = np.array(([np.cos(theta),0, np.sin(theta)],[0, 1, 0],[-np.sin(theta),0, np.cos(theta)]))
+        # transformZ= np.array(([np.cos(theta),-np.sin(theta),0],[np.sin(theta), np.cos(theta),0],[0, 0, 1]))
+        self.points3d_to_trc(
+            joints3d + np.array([[[0, z_offset, 0]]]), filename, 
+            normalize_marker_names(joint_names), fps=fps, rotMatrix=transformY
+            )
+
+        if return_points:
+            return joints3d
