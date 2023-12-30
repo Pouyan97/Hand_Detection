@@ -214,7 +214,7 @@ class HandPoseReconstruction(dj.Computed):
             [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypoints], axis=0
         )
 
-        print('CAMERAS', len(camera_names),'/', len(camera_name))
+        print('CAMERAS', len(camera_names))
         # work out the order that matches the calibration (should normally match)
         order = [list(camera_name).index(c) for c in camera_names]
         points2d = np.stack([keypoints[o][:, :, :] for o in order], axis=0)
@@ -225,20 +225,20 @@ class HandPoseReconstruction(dj.Computed):
             "reconstruction_method_name"
         )
 
-
+        print(reconstruction_method_name,reconstruction_method_name == r"Robust Triangulation $\\gamma=0.3$")
         if reconstruction_method_name == "Robust Triangulation":
             points3d, camera_weights = robust_triangulate_points(camera_calibration, points2d, return_weights=True)
-        elif reconstruction_method_name == "Robust Triangulation $\sigma=100$":
+        elif reconstruction_method_name == r"Robust Triangulation $\\sigma=100$":
             points3d, camera_weights = robust_triangulate_points(
                 camera_calibration, points2d, return_weights=True, sigma=100
             )
 
-        elif reconstruction_method_name == "Robust Triangulation $\sigma=50$":
+        elif reconstruction_method_name == r"Robust Triangulation $\\sigma=50$":
             points3d, camera_weights = robust_triangulate_points(
                 camera_calibration, points2d, return_weights=True, sigma=50
             )
 
-        elif reconstruction_method_name == "Robust Triangulation $\gamma=0.3$":
+        elif reconstruction_method_name == r"Robust Triangulation $\\gamma=0.3$":
             points3d, camera_weights = robust_triangulate_points(
                 camera_calibration, points2d, return_weights=True, threshold=0.3
             )
@@ -294,7 +294,7 @@ class HandPoseReconstruction(dj.Computed):
 
         return Q
         
-    def export_trc(self, filename, z_offset=0, start=None, end=None, return_points=False, smooth=False):
+    def export_trc(self, filename, z_offset=0, start=None, end=None, return_points=False, smooth=False, addMovi=True):
         """Export an OpenSim file of marker trajectories
 
         Params:
@@ -306,6 +306,7 @@ class HandPoseReconstruction(dj.Computed):
         """
 
         from pose_pipeline import  VideoInfo
+        from multi_camera.datajoint.multi_camera_dj import PersonKeypointReconstruction
         from multi_camera.analysis.biomechanics.opensim import normalize_marker_names
 
         method_name = (HandPoseEstimationMethodLookup & self).fetch1("estimation_method_name")
@@ -329,6 +330,24 @@ class HandPoseReconstruction(dj.Computed):
             for i in range(joints3d.shape[1]):
                 for j in range(joints3d.shape[2]):
                     joints3d[:, i, j] = scipy.signal.medfilt(joints3d[:, i, j], 5)
+
+        if addMovi:
+            moviList = ["R.Elbow.Lateral",#41
+                # "R.Forearm",#42
+                "R.Wrist.Lateral.Thumb",#43
+                "R.Wrist.Medial.pinky",#44
+                "R.Elbow.Medial.Inner",#57
+                ]
+            joint_names = moviList + joint_names
+            movikeys = self.fetch1('KEY')
+            movikeys['reconstruction_method'] = 0
+            movikeys['top_down_method']=12
+            moviinds = np.array((41,43,44,57))
+            # movikeys = ((PersonKeypointReconstruction & self)).fetch('KEY')
+            joints3dMovi = (PersonKeypointReconstruction & movikeys).fetch1('keypoints3d')[:,moviinds,:3]
+
+            joints3d = np.concatenate((joints3dMovi/1000.0,joints3d),axis=1)
+
         #ROTATE ALONG THE Y AXIS
         theta = np.pi
         # transformX = np.array(([1, 0, 0],[0, np.cos(theta), -np.sin(theta)],[0,np.sin(theta), np.cos(theta)]))
