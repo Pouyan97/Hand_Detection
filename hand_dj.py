@@ -149,6 +149,7 @@ class HandPoseReconstructionMethodLookup(dj.Lookup):
         {"reconstruction_method": 1, "reconstruction_method_name": r"Robust Triangulation $\\sigma=100$"},
         {"reconstruction_method": 2, "reconstruction_method_name": r"Robust Triangulation $\\sigma=50$"},
         {"reconstruction_method": 3, "reconstruction_method_name": r"Robust Triangulation $\\gamma=0.3$"},
+        {"reconstruction_method": 4, "reconstruction_method_name": r"Robust Triangulation $\\sigma=10$"},
         # {"reconstruction_method": 1, "reconstruction_method_name": "Explicit Optimization KP Conf, MaxHuber=10"},
         # {"reconstruction_method": 2, "reconstruction_method_name": "Implicit Optimization KP Conf, MaxHuber=10"},
         # {"reconstruction_method": 3, "reconstruction_method_name": "Implicit Optimization"},
@@ -242,8 +243,11 @@ class HandPoseReconstruction(dj.Computed):
                 camera_calibration, points2d, return_weights=True, threshold=0.3
             )
         
-        
-        
+        elif reconstruction_method_name == r"Robust Triangulation $\\sigma=10$":
+            points3d, camera_weights = robust_triangulate_points(
+                camera_calibration, points2d, return_weights=True, sigma=10, threshold = 0.3
+            )        
+        print(reconstruction_method_name)
         key["keypoints3d"] = np.array(points3d)
         key["camera_weights"] = np.array(camera_weights)
         key["reprojection_loss"] = reprojection_loss(camera_calibration, points2d, points3d[:, :, :3], huber_max=100)
@@ -285,9 +289,9 @@ class HandPoseReconstruction(dj.Computed):
         ax[1].plot(dt, kp3d[:, joint_idx, 3])
         # ax[1].plot(dt, present)
         ax[1].set_ylim(0, 1)
-        ax[1].set_title('3d keypoint score')
+        ax[1].set_title('3d keypoint confidence')
         ax[2].plot(dt, keypoints2d[:, :, joint_idx, 2].T)
-        ax[2].set_title('2d keypoints over cameras')
+        ax[2].set_title('2d keypoints confidence over cameras')
         plt.tight_layout()
 
     def points3d_to_trc(self, points3d, filename, marker_names, fps=30, rotMatrix=np.eye(3)):
@@ -324,6 +328,7 @@ class HandPoseReconstruction(dj.Computed):
 
         #Add Frame# and Time columns
         Q = pd.DataFrame(points3d)
+        Q = Q.interpolate()
         Q.insert(0, 't', Q.index / fps)
 
         #Write file
@@ -369,6 +374,8 @@ class HandPoseReconstruction(dj.Computed):
             for i in range(joints3d.shape[1]):
                 for j in range(joints3d.shape[2]):
                     joints3d[:, i, j] = scipy.signal.medfilt(joints3d[:, i, j], 5)
+
+        joints3d[...,:] = np.where(joints3d[...,:]==0, np.nan, joints3d[...,:])
 
         if addMovi:
             moviList = ["R.Elbow.Lateral",#41
