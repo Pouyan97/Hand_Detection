@@ -46,9 +46,9 @@ def mmpose_HPE(key, method='RTMPoseHand5'):
         ret, frame = cap.read()
         assert ret and frame is not None
         # handle the case where hand is not detected
-        if np.any(np.isnan(bbox)):
-            results.append(np.zeros((num_keypoints, 3)))
-            continue
+        # if np.any(np.isnan(bbox)):
+        #     results.append(np.zeros((num_keypoints, 3)))
+        #     continue
         #run the frame through the model
         pose_results = inference_topdown(model, frame, bbox)
         ##
