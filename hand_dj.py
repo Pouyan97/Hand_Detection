@@ -225,7 +225,6 @@ class HandPoseReconstruction(dj.Computed):
             "reconstruction_method_name"
         )
 
-        print(reconstruction_method_name,reconstruction_method_name == r"Robust Triangulation $\\gamma=0.3$")
         if reconstruction_method_name == "Robust Triangulation":
             points3d, camera_weights = robust_triangulate_points(camera_calibration, points2d, return_weights=True)
         elif reconstruction_method_name == r"Robust Triangulation $\\sigma=100$":
@@ -250,7 +249,47 @@ class HandPoseReconstruction(dj.Computed):
         key["reprojection_loss"] = reprojection_loss(camera_calibration, points2d, points3d[:, :, :3], huber_max=100)
 
         self.insert1(key, allow_direct_insert=True)
-    
+
+
+
+    def plot_joint(self, joint_idx=range(21), relative=False):
+        from pose_pipeline import VideoInfo
+        from matplotlib import pyplot as plt
+        
+        method_name = (HandPoseEstimationMethodLookup & self).fetch1("estimation_method_name")
+        joint_names = HandPoseEstimation.joint_names(method_name)
+
+        kp3d = self.fetch1("keypoints3d")
+        timestamps = (VideoInfo * SingleCameraVideo & self).fetch("timestamps", limit=1)[0]
+        # present = np.stack((HandBbox * SingleCameraVideo & self).fetch("present"))
+        # present = np.sum(present, axis=0) / present.shape[0]
+        kp2d = (HandPoseEstimation * SingleCameraVideo & self).fetch("keypoints_2d")
+        #concatenate all keypoionts for left and right hand
+        new_keypoints=[]
+        for camera_k in kp2d:
+            new_keypoints.append(np.asarray([np.concatenate(frame_kp,axis=0) for frame_kp in camera_k]))
+        kp2d = np.stack(new_keypoints)
+        
+        kp3d = kp3d[:, :len(joint_names)]
+
+        N = min([k.shape[0] for k in kp2d])
+        keypoints2d = np.stack([k[:N] for k in kp2d], axis=0)
+
+        keypoints2d = keypoints2d[:, :, : kp3d.shape[1]]
+        dt = np.array([(t - timestamps[0]).total_seconds() for t in timestamps])
+        dt = dt[: kp3d.shape[0]]
+        # print(kp3d[:, joint_idx,3])
+        fig, ax = plt.subplots(3, 1, figsize=(5, 4))
+        ax[0].plot(dt, kp3d[:, joint_idx, :3])
+        ax[0].set_title('3d keypoints')
+        ax[1].plot(dt, kp3d[:, joint_idx, 3])
+        # ax[1].plot(dt, present)
+        ax[1].set_ylim(0, 1)
+        ax[1].set_title('3d keypoint score')
+        ax[2].plot(dt, keypoints2d[:, :, joint_idx, 2].T)
+        ax[2].set_title('2d keypoints over cameras')
+        plt.tight_layout()
+
     def points3d_to_trc(self, points3d, filename, marker_names, fps=30, rotMatrix=np.eye(3)):
         import pandas as pd
         '''
