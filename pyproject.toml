@@ -8,5 +8,5 @@ dependencies = ["numpy"]
 
 
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
