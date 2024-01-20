@@ -1,0 +1,12 @@
+[project]
+name = "hand_detection"
+version = "0.1.0"
+description = "A library for hand pose estimation."
+authors = [{name = "Pouyan Firouzabadi", email = "sppf75@gmail.com"}]
+keywords = ["pose estimation", "hand pose estimation", "video", "deep learning", "machine learning"]
+dependencies = ["numpy"]
+
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
