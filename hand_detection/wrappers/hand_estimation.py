@@ -3,30 +3,33 @@ import cv2
 import numpy as np
 import datajoint as dj
 from pose_pipeline import Video
-from hand_dj import HandBbox
+from hand_detection.hand_dj import HandBbox
 from tqdm import tqdm
 
 def mmpose_HPE(key, method='RTMPoseHand5'):
 
     from mmpose.apis import inference_topdown, init_model
     from mmpose.evaluation.functional import nms
-
-
+    path = os.path.dirname(os.path.abspath(__file__))
     if method == 'freihand':
-        pose_model_cfg = 'wrappers/models/td-hm_res50_8xb64-100e_freihand2d-224x224.py'
+        pose_model_cfg = os.path.join(path, 'mmpose/configs/hand_2d_keypoint/topdown_heatmap/freihand2d/td-hm_res50_8xb64-100e_freihand2d-224x224.py')
         pose_model_ckpt = 'https://download.openmmlab.com/mmpose/hand/resnet/res50_freihand_224x224-ff0799bc_20200914.pth'
         num_keypoints = 21
     elif method == 'RTMPoseHand5':
-        pose_model_cfg = 'wrappers/mmpose/configs/hand_2d_keypoint/rtmpose/hand5/rtmpose-m_8xb256-210e_hand5-256x256.py'
+        pose_model_cfg = os.path.join(path, 'mmpose/configs/hand_2d_keypoint/rtmpose/hand5/rtmpose-m_8xb256-210e_hand5-256x256.py')
         pose_model_ckpt = 'https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmpose-m_simcc-hand5_pt-aic-coco_210e-256x256-74fb594_20230320.pth'
         num_keypoints = 21
     elif method == 'RTMPoseCOCO':
-        pose_model_cfg = 'wrappers/models/rtmpose-m_8xb32-210e_coco-wholebody-hand-256x256.py'
+        pose_model_cfg = os.path.join(path, 'mmpose/configs/hand_2d_keypoint/rtmpose/coco_wholebody_hand/rtmpose-m_8xb32-210e_coco-wholebody-hand-256x256.py')
         pose_model_ckpt = 'https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmpose-m_simcc-coco-wholebody-hand_pt-aic-coco_210e-256x256-99477206_20230228.pth'
         num_keypoints = 21
     elif method == 'HRNet_dark':
-        pose_model_cfg = "wrappers/models/td-hm_hrnetv2-w18_dark-8xb64-210e_rhd2d-256x256.py"
+        pose_model_cfg = os.path.join(path, "mmpose/configs/hand_2d_keypoint/topdown_heatmap/rhd2d/td-hm_hrnetv2-w18_dark-8xb64-210e_rhd2d-256x256.py")
         pose_model_ckpt = "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_rhd2d_256x256_dark-4df3a347_20210330.pth"
+        num_keypoints = 21
+    elif method == 'HRNet_udp':
+        pose_model_cfg = os.path.join(path, "mmpose/configs/hand_2d_keypoint/topdown_heatmap/onehand10k/td-hm_hrnetv2-w18_udp-8xb64-210e_onehand10k-256x256.py")
+        pose_model_ckpt = "https://download.openmmlab.com/mmpose/hand/udp/hrnetv2_w18_onehand10k_256x256_udp-0d1b515d_20210330.pth"
         num_keypoints = 21
 
 
