@@ -80,8 +80,8 @@ def extract_xy_min_max(points, width, height):
 
 def make_bbox_from_keypoints(
         keypoints=[],
-        width = 50,
-        height = 50,
+        width = 120,
+        height = 120,
         ):
     right_hand_keypoints = keypoints[:,-21:,:2]
     left_hand_keypoints = keypoints[:,-42:-21,:2]
@@ -90,6 +90,15 @@ def make_bbox_from_keypoints(
     for i in range(keypoints.shape[0]):
         right_hand_bboxes = extract_xy_min_max(right_hand_keypoints[i], width, height)
         left_hand_bboxes = extract_xy_min_max(left_hand_keypoints[i], width, height)
+        if (right_hand_bboxes<0).any():
+            right_hand_bboxes = np.zeros(4)
+            right_hand_bboxes[3] = 1500
+            right_hand_bboxes[2] = 2040 
+        if (left_hand_bboxes<0).any():
+            left_hand_bboxes = np.zeros(4)
+            left_hand_bboxes[3] = 1500
+            left_hand_bboxes[2] = 2040
+
         bboxes.append([right_hand_bboxes,left_hand_bboxes])
 
     return 2, bboxes

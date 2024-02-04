@@ -78,7 +78,7 @@ def mmpose_HPE(key, method='RTMPoseHand5'):
 
 
 
-def overlay_hand_keypoints(video, output_file, keypoints):
+def overlay_hand_keypoints(video, output_file, keypoints, bboxes):
         """Process a video and create overlay of keypoints
 
         Args:
@@ -95,6 +95,10 @@ def overlay_hand_keypoints(video, output_file, keypoints):
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         fps = cap.get(cv2.CAP_PROP_FPS)
         output_size = (int(w),int(h))
+        # bboxes = bboxes.astype(int)
+
+        # bbox = np.min(bboxes,axis=0)-100
+        # bbox[-2:]= np.max(bboxes,axis=0)[-2:]+100
         #set writer
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_file,fourcc, fps,output_size)
@@ -105,7 +109,10 @@ def overlay_hand_keypoints(video, output_file, keypoints):
                 break
             for k in keypoints[frame_idx]:
                 keypoints_2d = k[:,:]
-                frame = draw_keypoints(frame,keypoints_2d)
+                frame = draw_keypoints(frame,keypoints_2d, threshold=0.2)
+                for bbox in bboxes[frame_idx]:
+                    frame = cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 255, 0), 2)  # Green color, 2 pixel thickness
+
             out.write(frame)
         #remove
         out.release()
