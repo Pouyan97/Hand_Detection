@@ -134,10 +134,12 @@ class HandPoseEstimationVideo(dj.Computed):
 
         keypoints = (HandPoseEstimation & key).fetch1("keypoints_2d")
         vid_file = (Video & key).fetch1('video')      
+        bboxes = np.asarray((HandBbox & key).fetch1('bboxes'))
+
         fd, out_file_name = tempfile.mkstemp(suffix=".mp4")
         os.close(fd)
         
-        overlay_hand_keypoints(vid_file, out_file_name, keypoints.copy())
+        overlay_hand_keypoints(vid_file, out_file_name, keypoints.copy(),bboxes)
         
         key["output_video"] = out_file_name
         self.insert1(key)
@@ -387,17 +389,20 @@ class HandPoseReconstruction(dj.Computed):
         joints3d[...,:] = np.where(joints3d[...,:]==0, np.nan, joints3d[...,:])
 
         if addMovi:
-            moviList = ["R.Elbow.Lateral",#41
+            movi_joints= [  
+                "R.clavicle",#2
+                "R.Shoulder.M",#39
+                "R.Elbow.Lateral",#41
                 # "R.Forearm",#42
                 "R.Wrist.Lateral.Thumb",#43
                 "R.Wrist.Medial.pinky",#44
                 "R.Elbow.Medial.Inner",#57
-                ]
-            joint_names = moviList + joint_names
+                    ]
+            moviinds = np.array((2,39,41,43,44,57))
+            joint_names = movi_joints + joint_names
             movikeys = self.fetch1('KEY')
             movikeys['reconstruction_method'] = 0
             movikeys['top_down_method']=12
-            moviinds = np.array((41,43,44,57))
             # movikeys = ((PersonKeypointReconstruction & self)).fetch('KEY')
             joints3dMovi = (PersonKeypointReconstruction & movikeys).fetch1('keypoints3d')[:,moviinds,:3]
 
@@ -415,3 +420,51 @@ class HandPoseReconstruction(dj.Computed):
 
         if return_points:
             return joints3d
+
+
+
+@schema
+class MJXReconstruction(dj.Computed): 
+    definition = """
+    -> HandPoseReconstruction
+    # -> BiomechanicalReconstructionSettingsLookup
+    ---
+    body_scale             : longblob
+    site_offsets           : longblob
+    mean_reprojection_loss : float
+    site_offset_loss       : float
+    timestamps             : longblob   
+    qpos                   : longblob
+    qvel                   : longblob
+    joints                 : longblob
+    sites                  : longblob
+    """   
+    def make(self,key):
+        from body_models.biomechanics_mjx.implicit_fitting import fit_keys, fit_key
+        from body_models.biomechanics_mjx import ForwardKinematics
+        import jax
+        from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
+
+        from pose_pipeline import VideoInfo
+        # biomechanical_reconstruction_settings = (BiomechanicalReconstructionSettingsLookup & key).fetch1("biomechanical_reconstruction_settings")
+
+        model, metrics = fit_key(key, max_iters=40000)
+        key["body_scale"] = np.array(model.body_scale)
+        key["site_offsets"] = np.array(model.site_offsets)
+        key["mean_reprojection_loss"] = float(metrics["keypoints_loss"])
+        key["site_offset_loss"] = float(metrics["site_offset"])
+        # key["delta_camera_loss"] = float(metrics["delta_camera"]) if "delta_camera" in metrics else 0.0
+
+        timestamps, keypoints2d = fetch_keypoints(key)
+
+        trial_result = model(timestamps, return_full=True, fast_inference=True)
+
+        # key.update(base_key)
+
+        key["timestamps"] = timestamps
+        key["qpos"] = np.array(trial_result.qpos)
+        key["qvel"] = np.array(trial_result.qvel)
+        key["joints"] = np.array(trial_result.xpos)
+        key["sites"] = np.array(trial_result.site_xpos)
+        # key["reprojection_loss"] = float(metrics[f"keypoint_loss_{i}"])
+        self.insert1(key)
