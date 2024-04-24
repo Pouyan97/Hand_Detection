@@ -68,13 +68,13 @@ def mmpose_HPE(key, method='RTMPoseHand5'):
             keypoints_2d.append(np.concatenate((keypoints[0,:,:],keypoint_scores.T), axis = -1))
         # print(keypoints.shape,keypoint_scores.T.shape,len(pose_results), len(bbox))
         #concat scores and keypoints(flatten)
-        results.append(keypoints_2d)
+        results.append(np.concatenate(keypoints_2d, axis=0))
 
 
     cap.release()
     os.remove(video)
 
-    return results
+    return np.array(results)
 
 
 
@@ -107,13 +107,138 @@ def overlay_hand_keypoints(video, output_file, keypoints, bboxes):
             success, frame = cap.read()
             if not success:
                 break
-            for k in keypoints[frame_idx]:
-                keypoints_2d = k[:,:]
-                frame = draw_keypoints(frame,keypoints_2d, threshold=0.2)
-                for bbox in bboxes[frame_idx]:
-                    frame = cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 255, 0), 2)  # Green color, 2 pixel thickness
+            keypoints_2d = keypoints[frame_idx][:,:]
+            frame = draw_keypoints(frame,keypoints_2d, threshold=0.2)
+            for bbox in bboxes[frame_idx]:
+                frame = cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 255, 0), 2)  # Green color, 2 pixel thickness
 
             out.write(frame)
         #remove
         out.release()
         cap.release()
+
+
+
+
+
+
+
+
+
+
+
+def plot_triangulated_keypoints(key, kp3d, only_osim = False):
+        from hand_detection.hand_dj import HandPoseEstimation, HandBbox, HandPoseReconstruction
+        from multi_camera.datajoint.sessions import Recording
+        from multi_camera.datajoint.multi_camera_dj import Calibration, MultiCameraRecording, SingleCameraVideo
+        from multi_camera.analysis.camera import project_distortion, get_intrinsic, get_extrinsic, distort_3d
+
+        from pose_pipeline.pipeline import Video, VideoInfo, BlurredVideo
+        from pose_pipeline.utils.visualization import video_overlay, draw_keypoints
+        import cv2
+
+        videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
+        camera_params= (Recording * Calibration & key).fetch1("camera_calibration")
+        camera_names = (Recording * Calibration & key).fetch1("camera_names")
+        video_keys = (videos).fetch("KEY")
+        fps = np.unique((VideoInfo & video_keys[0]).fetch1("fps"))
+        width = np.unique((VideoInfo & video_keys).fetch("width"))[0]
+        height = np.unique((VideoInfo & video_keys).fetch("height"))[0]
+
+        keypoints_2d_MJX = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
+        # keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
+
+        num_cameras = len(camera_names)
+        results = []
+        for ci in range(num_cameras):
+            cam_idx = ci
+            
+            i = cam_idx
+            # get camera parameters
+            K = np.array(get_intrinsic(camera_params, i))
+
+            # don't use real extrinsic since we apply distortion which does this
+            R = np.eye(3)
+            T = np.zeros((3,))
+            cameras = {"K": [K], "R": [R], "T": [T]}
+
+
+            background = np.ones((height, width, 3), dtype=np.uint8) * 127
+            vid_file = (BlurredVideo & video_keys[i]).fetch1("output_video")
+            # vid_file = (Video & video_keys[i]).fetch1("video")
+            vid = cv2.VideoCapture(vid_file)
+
+            kp2d_camera = np.asarray((HandPoseEstimation & video_keys[ci]).fetch1("keypoints_2d"))
+            kp2d_camera = kp2d_camera.reshape(kp2d_camera.shape[0], -1, kp2d_camera.shape[-1])    
+            bboxes = np.asarray((HandBbox & video_keys[ci]).fetch1('bboxes'))
+            bboxes = bboxes[:,0,:]
+
+            bbox = np.min(bboxes,axis=0)
+            bbox[-2:]= np.max(bboxes,axis=0)[-2:]
+            # bbox[:2] -= bbox[:2]/2
+            # bbox[-2:] += bbox[-2:]/2
+            
+            def render_overlay(frame, idx, frame_idx):
+                #Blue
+                color = (200, 30, 30)
+                raw_frame = draw_keypoints(frame, np.array(keypoints_2d_MJX[idx, frame_idx]), radius=5, threshold=0.10, border_color=color, color=color)
+                    
+                if not only_osim:
+                    # #Red
+                    # color = (30, 30, 200)
+                    # raw_frame = draw_keypoints(raw_frame, np.array(keypoints_2d_triangulated[idx, frame_idx]), radius=5, threshold=0.10, border_color=color, color=color)
+
+                    #Green
+                    color = (30, 200, 30)
+                    raw_frame = draw_keypoints(raw_frame, np.array(kp2d_camera[frame_idx,:21]), radius=5, threshold=0.10, border_color=color, color=color)
+                    
+                raw_frame = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2RGB)
+
+                # raw_frame = crop_image_bbox(
+                #     raw_frame, bboxes[frame_idx], target_size=(288, int(288 * 1920 / 1080)), dilate=1.0
+                # )[0]
+                target_size= (280, int(280 * 1920 / 1080))
+                dilate= 1.4 
+                image = raw_frame
+                # bbox = bboxes[frame_idx]            
+                # bbox = fix_bb_aspect_ratio(bbox, ratio=target_size[0] / target_size[1], dilate=dilate)
+                
+                # three points on corner of bounding box
+                src = np.asarray([[bbox[0], bbox[1]], [bbox[2] ,bbox[3]], [bbox[0], bbox[3]]])
+                dst = np.array([[0, 0], [target_size[0], target_size[1]], [0, target_size[1]]])  # .astype(np.float32)
+                trans = cv2.getAffineTransform(np.float32(src), np.float32(dst))
+                image = cv2.warpAffine(image, trans, target_size, flags=cv2.INTER_LINEAR)
+
+                return image
+            
+            def make_frames():
+                list_frames = []
+                vid.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                for frame_num in tqdm(range(keypoints_2d_MJX.shape[1])):#range(260,290):
+                    # print(frame_num, '|', kp3d.shape[0])
+                    # vid.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                    _, frame = vid.read()
+                    frame = render_overlay(frame, cam_idx, frame_num)
+                    list_frames.append(frame)
+                return list_frames
+            
+            results.append(make_frames())
+            os.remove(vid_file)
+            vid.release()
+        return results
+        
+
+def plot_3d_reprojected_keypoints(key, kp3d, only_osim = False):
+    results = plot_triangulated_keypoints(key, kp3d, only_osim = only_osim)
+    def images_to_grid(images, n_cols=4):
+        n_rows = int(np.ceil(len(images) / n_cols))
+        grid = np.zeros((n_rows * images[0].shape[0], n_cols * images[0].shape[1], 3), dtype=np.uint8)
+        for i, img in enumerate(images):
+            row = i // n_cols
+            col = i % n_cols
+            grid[row * img.shape[0] : (row + 1) * img.shape[0], col * img.shape[1] : (col + 1) * img.shape[1], :] = img
+        return grid
+
+    # collate the results into a grid
+    grid = [images_to_grid(r) for r in zip(*results)]
+    return results, grid
