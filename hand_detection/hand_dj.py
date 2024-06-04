@@ -221,7 +221,7 @@ class HandPoseReconstruction(dj.Computed):
         import numpy as np
         from multi_camera.analysis.camera import robust_triangulate_points, triangulate_point
         from multi_camera.analysis.optimize_reconstruction import  reprojection_loss, smoothness_loss        
-        calibration_key = (Calibration & key).fetch1("KEY")
+        calibration_key = (CalibratedRecording & key).fetch1("KEY")
         recording_key = (MultiCameraRecording & key).fetch1("KEY")
         reconstruction_method = key["reconstruction_method"]
         estimation_method = key["estimation_method"]
@@ -458,6 +458,71 @@ class HandPoseReconstruction(dj.Computed):
 
         if return_points:
             return joints3d
+@schema
+class HandPoseReconstructionVideo(dj.Computed):
+    definition = """
+    -> HandPoseReconstruction
+    ---
+    output_video      : attach@localattach    # datajoint managed video file
+    """   
+    def make(self,key):
+        from hand_detection.wrappers.hand_estimation import overlay_hand_keypoints
+        import os
+        import tempfile
+        from pose_pipeline.pipeline import Video
+        import cv2
+        from tqdm import tqdm
+        from hand_detection.wrappers.hand_estimation import plot_3d_reprojected_keypoints
+        from multi_camera.datajoint.multi_camera_dj import PersonKeypointReconstruction
+
+        # pose = (MJXReconstruction & key).fetch1('qpos')
+        kp3d = (HandPoseReconstruction & key).fetch1('keypoints3d')
+        # moviinds = np.array((2,39,41,43,44,57))
+        
+        # movikeys = key.copy()
+        # movikeys.pop('reconstruction_method')
+        # # movikeys['reconstruction_method'] = 0
+        # movikeys['top_down_method']=12
+
+        # # robust_movi = (PersonKeypointReconstruction & movikeys & 'reconstruction_method=0').fetch('reprojection_loss')
+        # # implicit_movi = (PersonKeypointReconstruction & movikeys & 'reconstruction_method=2').fetch('reprojection_loss')
+        # # if len(robust_movi) == 0:
+        # #     print('No MOVI data found for robust triangulation')
+        # # if len(implicit_movi) == 0:
+        # #     print('No MOVI data found for implicit optimization')
+        # # if robust_movi < implicit_movi:
+        # #     movikeys['reconstruction_method'] = 0
+        # #     print('Using robust triangulation for MOVI')
+        # # else:
+        # #     movikeys['reconstruction_method'] = 2
+        # #     print('Using implicit optimization for MOVI')
+        # # movikeys = ((PersonKeypointReconstruction & self)).fetch('KEY')
+        # # joints3dMovi = (PersonKeypointReconstruction & movikeys).fetch1('keypoints3d')[:,moviinds,:]
+        # joints3dMovi = (TopDownPerson & movikeys).fetch1('keypoints')[:,moviinds,:]
+        
+
+        # kp3d = np.concatenate((joints3dMovi,kp3d),axis=1)
+        results, grid = plot_3d_reprojected_keypoints(key, kp3d, only_osim = False, useBlurred = False)
+        # write the collated frames into a video matching the original frame rate using opencv VideoWriter
+        fd, filename = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+        method = (HandPoseEstimationMethodLookup & key).fetch1('estimation_method_name')
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(filename, fourcc, 29, (grid[0].shape[1], grid[0].shape[0]))
+        frames = []
+        for frame in tqdm(grid, desc="Writing"):
+            cv2.putText(frame,  
+                        method+'  |  Green: 2D detections  |  Blue: 3D reprojection',  
+                        (50, 50),  
+                        cv2.FONT_HERSHEY_SIMPLEX , 1,  
+                        (0, 255, 255),  
+                        2,  
+                        cv2.LINE_4) 
+            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        writer.release()
+        key["output_video"] = filename
+        self.insert1(key)
+        os.remove(filename)
 
 @schema
 class MJXReconstructionMethod(dj.Manual):
@@ -696,7 +761,7 @@ class MJXReconstructionAnalysis(dj.Computed):
         # kp3dMuj = trajectory(timestamps)*1000
         #RIGHT HAND without the MOVI stuff
         kp3dMuj = kp3dMuj[:, -21:, :]
-        calibration_key = (Calibration & key).fetch1("KEY")
+        calibration_key = (CalibratedRecording & key).fetch1("KEY")
         camera_params, camera_names = (Calibration & calibration_key).fetch1("camera_calibration", "camera_names")
 
         keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
@@ -786,3 +851,93 @@ class MJXReconstructionAnalysis(dj.Computed):
         key['pose_noise'] = np.mean(Noise_mjx).item()
         print(key)
         self.insert1(key)
+
+
+
+
+@schema
+class OpenSim(dj.Computed): 
+    definition = """
+    -> HandPoseReconstruction
+    ---
+    keypoints             : longblob
+    """   
+    def make(self,key):
+        # from body_models.biomechanics_mjx.implicit_fitting import fit_keys, fit_key
+        # from body_models.biomechanics_mjx import ForwardKinematics
+        from hand_detection.wrappers.opensim import scale_model, IK_model
+        import os
+        # import jax
+        # from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
+        estimation_method_name =(HandPoseEstimationMethodLookup & key).fetch1('estimation_method_name')
+        detection_method_name =(HandBboxMethodLookup & key).fetch1('detection_method_name')
+        base_file_name = (MultiCameraRecording & key).fetch1('video_base_filename')
+        # base_file_name = "_".join(base_file_name.split('_')[:-2])
+        output_file= f'./{base_file_name}_{estimation_method_name}_{detection_method_name}_smoothed.trc'
+        pts = HandPoseReconstruction.export_trc((HandPoseReconstruction&key), output_file, z_offset=0, addMovi=True, smooth=True, return_points=True)
+        
+        pathScaledModel = scale_model('Models', output_file, 'ARM_Hand_Wrist_Model.osim', '27scales.xml', ['r_x','r_y','r_z'])
+        pathOutputIK = IK_model('Models', output_file, pathScaledModel, '27IK.xml')
+
+
+        kp3d = self.extract_from_osim(pathOutputIK)
+
+
+        os.remove(output_file)
+    #     python scaleModel.py -r 'Models' -trc '/home/pfirouzabadi/projects/Hand_Detection/trace_files/m002/m002_trial0_RTMPoseHand5_TopDown_smoothed.trc' \
+    # -m ARM_Hand_Wrist_Model.osim -sc 27scales.xml -ik 27IK.xml -j r_x r_y r_z
+
+        key["keypoints"] = kp3d
+        # # key["reprojection_loss"] = float(metrics[f"keypoint_loss_{i}"])
+        self.insert1(key)
+
+    def extract_from_osim(self, filename):
+        import pandas as pd
+        import numpy as np
+        # Read the ".sto" file into a Pandas DataFrame
+        markerDF = pd.read_csv(filename, sep='\t',skiprows=6)
+        # Display the DataFrame
+        markerDFkeys = markerDF.keys().values
+        # extract time and markers
+        markerKeys = np.array([marker.split('_')[0] for marker in markerDFkeys[1:]])[::3]
+        #Extract the coordinates of all markers except time
+        markersNP = markerDF.drop(columns =['time'])
+        points3d = markersNP.values.reshape(markerDF.shape[0], markerKeys.shape[0], 3)
+        theta = np.pi
+        rotation_matrix = np.array([
+            [np.cos(theta), 0, np.sin(theta)],
+            [0, 1, 0],
+            [-np.sin(theta), 0, np.cos(theta)]
+        ])
+        #rotate markers 180 along Y similar to extract trc file
+        points3d = points3d@rotation_matrix
+        points3d = np.take(points3d, [2, 0, 1], axis=-1)
+        keypoints3dOSIM = points3d
+        timeOSIM = markerDF['time'].values
+
+        #map the markers to joint_names to be exactly same as extracted previously
+        markerKeysDict ={element: index for index, element in enumerate(markerKeys)}
+        # Compare elements to original indices in joint_names
+        method_name = (HandPoseEstimationMethodLookup & self).fetch1("estimation_method_name")
+        joint_names = HandPoseEstimation.joint_names(method_name)
+        movi_joints= [  
+                "R.clavicle",#2
+                "R.Shoulder.M",#39
+                "R.Elbow.Lateral",#41
+                # "R.Forearm",#42
+                "R.Wrist.Lateral.Thumb",#43
+                "R.Wrist.Medial.pinky",#44
+                "R.Elbow.Medial.Inner",#57
+                ]
+        joint_names = movi_joints + joint_names
+
+        markerMapping = [markerKeysDict[element] for index, element in enumerate(joint_names)]
+
+        sorted_markerKeys = markerKeys[markerMapping]
+        sorted_keypoints3dOSIM = keypoints3dOSIM[:,markerMapping,:]
+        # #add the ground back to the keypoints
+        # for jj in range (sorted_keypoints3dOSIM.shape[1]):
+        #     sorted_keypoints3dOSIM[:,jj] = sorted_keypoints3dOSIM[:, jj] + groundRef
+        #Go back to mm from m
+        kp3dOsim = sorted_keypoints3dOSIM * 1000 
+        return kp3dOsim
