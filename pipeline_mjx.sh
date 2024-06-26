@@ -9,12 +9,12 @@ fi
 
 # conda stuff
 source /opt/anaconda/anaconda3/etc/profile.d/conda.sh 
-conda activate /home/pfirouzabadi/.conda/envs/mmlab2
+conda activate /home/pfirouzabadi/.conda/envs/mujoco2
 
 # Get the CUDA device number from the first argument
 CUDA_DEVICE_NUMBER=$1
 
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_NUMBER python populate_pipeline.py
+CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_NUMBER python populate_mjx.py
 
 
 conda deactivate

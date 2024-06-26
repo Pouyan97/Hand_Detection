@@ -4,21 +4,21 @@ from pose_pipeline.pipeline import BlurredVideo,LiftingPerson,LiftingMethod,TopD
 from multi_camera.datajoint.multi_camera_dj import PersonKeypointReconstruction,SingleCameraVideo, CalibratedRecording, MultiCameraRecording,PersonKeypointReconstructionMethod
 from multi_camera.datajoint.sessions import Recording
 from hand_detection.hand_dj import HandPoseReconstructionMethodLookup,HandPoseReconstructionMethod, HandPoseReconstruction,HandPoseEstimationMethodLookup
-from hand_detection.hand_dj import HandBbox,HandBboxMethod, HandPoseEstimation,HandPoseEstimationMethod,HandPoseEstimationVideo,MJXReconstruction
+from hand_detection.hand_dj import MJXReconstructionMethod, HandBbox,HandBboxMethod, HandPoseEstimation,HandPoseEstimationMethod,HandPoseEstimationVideo,MJXReconstruction
 
-def populate_MJX_reconstruction(keys):
-    MJXReconstruction.populate(keys,reserve_jobs=True)
-
-detection_methods = [1,2]
-estimation_methods = range(-1,5)
-# reconstruction_methods = [3]
-keys_list = ['filename LIKE "m002%"','filename LIKE "p40_rom_right_20221018_161656%"']
-for name in keys_list:
-    recording_keys = (Recording & (SingleCameraVideo & name )).fetch('KEY')
-    key = (HandPoseReconstruction & (HandBbox & name)).fetch('KEY')
-    for detection_method in detection_methods:
-        for estimation_method in estimation_methods:
-            for k in key:
-                k['estimation_method'] = estimation_method
-                k['detection_method'] = detection_method
-            populate_MJX_reconstruction(key)
+participants = ["yj843","rko5c","8wj64","lgtfc"]
+filenames = ['\_A\_%']
+for participant_id in participants:
+    for filename in filenames:
+        detection_methods = [1]
+        estimation_methods = [-1,0,1,2,3,4]
+        participant_videos = (Recording & (SingleCameraVideo & f'filename LIKE "{participant_id}{filename}"')).fetch('KEY')
+        for rk in participant_videos:
+            keys = (CalibratedRecording &(SingleCameraVideo & rk) ).fetch('KEY')
+            for estimation_method in estimation_methods:
+                for k in keys:
+                    k['detection_method'] = 1 
+                    k['estimation_method'] = estimation_method     
+                print(keys)
+                MJXReconstructionMethod.insert(keys,skip_duplicates=True)
+                MJXReconstruction.populate(keys)        

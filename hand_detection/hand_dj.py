@@ -414,6 +414,7 @@ class HandPoseReconstruction(dj.Computed):
 
         if addMovi:
             movi_joints= [  
+                "sternum",#3
                 "R.clavicle",#2
                 "R.Shoulder.M",#39
                 "R.Elbow.Lateral",#41
@@ -422,7 +423,7 @@ class HandPoseReconstruction(dj.Computed):
                 "R.Wrist.Medial.pinky",#44
                 "R.Elbow.Medial.Inner",#57
                     ]
-            moviinds = np.array((2,39,41,43,44,57))
+            moviinds = np.array((3,2,39,41,43,44,57))
             joint_names = movi_joints + joint_names
             movikeys = self.fetch1('KEY')
             movikeys.pop('reconstruction_method')
@@ -430,17 +431,17 @@ class HandPoseReconstruction(dj.Computed):
             movikeys['top_down_method']=12
 
             robust_movi = (PersonKeypointReconstruction & movikeys & 'reconstruction_method=0').fetch('reprojection_loss')
-            implicit_movi = (PersonKeypointReconstruction & movikeys & 'reconstruction_method=2').fetch('reprojection_loss')
+            # implicit_movi = (PersonKeypointReconstruction & movikeys & 'reconstruction_method=2').fetch('reprojection_loss')
             if len(robust_movi) == 0:
                 print('No MOVI data found for robust triangulation')
-            if len(implicit_movi) == 0:
-                print('No MOVI data found for implicit optimization')
-            if robust_movi < implicit_movi:
-                movikeys['reconstruction_method'] = 0
-                print('Using robust triangulation for MOVI')
-            else:
-                movikeys['reconstruction_method'] = 2
-                print('Using implicit optimization for MOVI')
+            # if len(implicit_movi) == 0:
+            #     print('No MOVI data found for implicit optimization')
+            # if robust_movi < implicit_movi:
+            movikeys['reconstruction_method'] = 0
+            print('Using robust triangulation for MOVI')
+            # else:
+            #     movikeys['reconstruction_method'] = 2
+            #     print('Using implicit optimization for MOVI')
             # movikeys = ((PersonKeypointReconstruction & self)).fetch('KEY')
             joints3dMovi = (PersonKeypointReconstruction & movikeys).fetch1('keypoints3d')[:,moviinds,:3]
 
@@ -523,6 +524,125 @@ class HandPoseReconstructionVideo(dj.Computed):
         key["output_video"] = filename
         self.insert1(key)
         os.remove(filename)
+
+@schema
+class HandPoseReconstructionAnalysis(dj.Computed):
+    definition = """
+    -> HandPoseReconstruction
+    ---
+    pk_5              : float
+    pk_10             : float
+    pcks              : longblob
+    spatial_loss      : float
+    pose_noise        : float
+    """
+    def make(self,key):
+        # from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
+        from pose_pipeline import  VideoInfo
+        from multi_camera.datajoint.sessions import Recording
+        from multi_camera.analysis import fit_quality
+        import cv2
+        from multi_camera.analysis.camera import project_distortion, get_intrinsic, get_extrinsic, distort_3d
+        
+        kp3d = (HandPoseReconstruction & key).fetch1('keypoints3d')
+        # tables = Recording *  HandPoseEstimation * HandPoseEstimationMethodLookup * HandPoseReconstructionMethodLookup
+        camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('camera_name')
+
+        #First 21 keypoints is the right hand points
+        kp3d = kp3d[:, :21, :]
+        calibration_key = (CalibratedRecording & key).fetch1("KEY")
+        camera_params, camera_names = (Calibration & calibration_key).fetch1("camera_calibration", "camera_names")
+
+        keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
+        #pad zeros for all cameras
+        N = max([len(k) for k in keypointsHPE])
+        keypointsHPE = np.stack(
+            [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
+        )
+
+        #pad zeros for 3d keypoints
+        kp3d = np.concatenate([kp3d, np.zeros([N - kp3d.shape[0], *kp3d.shape[1:]])], axis=0)
+        
+        # work out the order that matches the calibration (should normally match)
+        order = [list(camera_name).index(c) for c in camera_names]
+        points2d = np.stack([keypointsHPE[o][:, :21, :] for o in order], axis=0)
+
+        #Get the right hand compared to 3d keypoints
+        metrics2, thresh, confidence = fit_quality.reprojection_quality( kp3d[:, :, :3], camera_params, points2d[:,:,:21,:])
+        pck10 = metrics2[np.argmin(np.abs(thresh - 10)), np.argmin(np.abs(confidence - 0.5))]
+        pck5 = metrics2[np.argmin(np.abs(thresh - 5)), np.argmin(np.abs(confidence - 0.5))]
+        pcks = np.array([metrics2[np.argmin(np.abs(thresh - i)), np.argmin(np.abs(confidence - 0.5))].item() for i in range(16)])
+        
+        
+        #SETTING UP CALCULATION FOR SPATIAL ERROR
+        videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
+        keypoints2d = points2d
+        rvec = camera_params["rvec"]
+        rmats = [cv2.Rodrigues(np.array(r[None, :]))[0].T for r in rvec]
+
+        tvec = camera_params["tvec"]
+        rvec = camera_params["rvec"]
+        # Removed display function calls to prevent error
+        # Assuming camera_params['mtx'] and camera_params['dist'] are well-defined
+        video_keys = (videos).fetch("KEY")
+        fps = np.unique((VideoInfo & video_keys[0]).fetch1("fps"))
+        width = np.unique((VideoInfo & video_keys).fetch("width"))[0]
+        height = np.unique((VideoInfo & video_keys).fetch("height"))[0]
+
+        # Convert rotation vectors to rotation matrices
+        rmats = [cv2.Rodrigues(np.array(r[None, :]))[0].T for r in rvec]
+
+        pos = np.array([-R.dot(t) for R, t in zip(rmats, tvec)])*1000
+
+        #CALCULATING THE SPATIAL ERROR
+        keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
+        SC= []
+        for ci in range(keypoints2d.shape[0]):
+            
+            # Extract the translation vector from the camera parameters
+            # Calculate the distance to the point
+            distance = np.linalg.norm(pos[ci,:] - kp3d[...,:3], axis=-1)
+            
+            projection_error = keypoints_2d_triangulated[ci,:,:21,:2] - keypoints2d[ci,:,:, :2]
+            # keypoint_conf = keypoints2d[ci,..., 2]
+            intrinsics = get_intrinsic(camera_params,ci)
+
+            # Extract the focal lengths from the camera parameters
+            focal_length_x = intrinsics[0, 0]  # assuming the focal length in x direction is at this location
+            focal_length_y = intrinsics[1, 1]  # assuming the focal length in y direction is at this location
+
+            # Calculate the FOVs
+            fov_x = 2 * np.arctan(width / (2 * focal_length_x))
+            fov_y = 2 * np.arctan(height / (2 * focal_length_y))
+            # Calculate the degree of view for each pixel
+            degree_per_pixel_x = fov_x / width
+            degree_per_pixel_y = fov_y / height
+
+            angular_error = np.array([degree_per_pixel_x, degree_per_pixel_y]) * projection_error
+            # Calculate the spatial errors
+            spatial_error_x = distance * np.tan(angular_error[...,0])
+            spatial_error_y = distance * np.tan(angular_error[...,1])
+            spatial_error = np.linalg.norm(np.array([spatial_error_x, spatial_error_y]),axis=0)
+            # Calculate the widths of the view at the distance of the object
+            # print('camera', ci, 'median error: ', np.median(spatial_error), 'mm')
+            # # Calculate the spatial errors
+            SC.append(np.mean(spatial_error))
+
+        #CALCULATING THE NOISE
+        point_difference = np.diff(kp3d/1000, axis=0)**2
+        diff_sum = np.sum(point_difference, axis=0) 
+        Noise_mjx = np.mean(diff_sum, axis=0)
+        
+        key['pk_5']= pck5.item()
+        key['pk_10']= pck10.item()
+        key['pcks']= pcks
+        
+        key['spatial_loss'] = np.median(SC).item()
+        key['pose_noise'] = np.mean(Noise_mjx).item()
+
+        self.insert1(key)
+
+
 
 @schema
 class MJXReconstructionMethod(dj.Manual):
@@ -737,6 +857,7 @@ class MJXReconstructionAnalysis(dj.Computed):
     ---
     pk_5              : float
     pk_10             : float
+    pks               : longblob 
     spatial_loss      : float
     pose_noise        : float
     """
@@ -784,6 +905,7 @@ class MJXReconstructionAnalysis(dj.Computed):
         metrics2, thresh, confidence = fit_quality.reprojection_quality( kp3dMuj[:, :, :3], camera_params, points2d[:,:,:21,:])
         pck10 = metrics2[np.argmin(np.abs(thresh - 10)), np.argmin(np.abs(confidence - 0.5))]
         pck5 = metrics2[np.argmin(np.abs(thresh - 5)), np.argmin(np.abs(confidence - 0.5))]
+        pcks = np.array([metrics2[np.argmin(np.abs(thresh - i)), np.argmin(np.abs(confidence - 0.5))].item() for i in range(16)])
 
         #SETTING UP CALCULATION FOR SPATIAL ERROR
         videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
@@ -803,7 +925,7 @@ class MJXReconstructionAnalysis(dj.Computed):
         # Convert rotation vectors to rotation matrices
         rmats = [cv2.Rodrigues(np.array(r[None, :]))[0].T for r in rvec]
 
-        pos = np.array([-R.dot(t) for R, t in zip(rmats, tvec)])*1000
+        pos = np.array([-R.dot(t) for R, t in zip(rmats, tvec)])
 
         #CALCULATING THE SPATIAL ERROR
         keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3dMuj) for i in range(camera_params["mtx"].shape[0])])
@@ -816,7 +938,7 @@ class MJXReconstructionAnalysis(dj.Computed):
             
             projection_error = keypoints_2d_triangulated[ci,:,:21,:2] - keypoints2d[ci,:,:, :2]
             # keypoint_conf = keypoints2d[ci,..., 2]
-            intrinsics = get_intrinsic(camera_params,0)
+            intrinsics = get_intrinsic(camera_params,ci)
 
             # Extract the focal lengths from the camera parameters
             focal_length_x = intrinsics[0, 0]  # assuming the focal length in x direction is at this location
@@ -837,7 +959,7 @@ class MJXReconstructionAnalysis(dj.Computed):
             # Calculate the widths of the view at the distance of the object
             # print('camera', ci, 'median error: ', np.median(spatial_error), 'mm')
             # # Calculate the spatial errors
-            SC.append(np.median(spatial_error))
+            SC.append(np.mean(spatial_error))
 
         #CALCULATING THE NOISE
         point_difference = np.diff(kp3dMuj/1000, axis=0)**2
@@ -846,7 +968,8 @@ class MJXReconstructionAnalysis(dj.Computed):
         
         key['pk_5']= pck5.item()
         key['pk_10']= pck10.item()
-        
+        key['pks']= pcks
+
         key['spatial_loss'] = np.median(SC).item()
         key['pose_noise'] = np.mean(Noise_mjx).item()
         print(key)
@@ -856,7 +979,7 @@ class MJXReconstructionAnalysis(dj.Computed):
 
 
 @schema
-class OpenSim(dj.Computed): 
+class OpenSimReconstruction(dj.Computed): 
     definition = """
     -> HandPoseReconstruction
     ---
@@ -865,23 +988,23 @@ class OpenSim(dj.Computed):
     def make(self,key):
         # from body_models.biomechanics_mjx.implicit_fitting import fit_keys, fit_key
         # from body_models.biomechanics_mjx import ForwardKinematics
-        from hand_detection.wrappers.opensim import scale_model, IK_model
+        from hand_detection.wrappers.opensim.scaleModel import scale_model, IK_model
         import os
         # import jax
         # from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
         estimation_method_name =(HandPoseEstimationMethodLookup & key).fetch1('estimation_method_name')
         detection_method_name =(HandBboxMethodLookup & key).fetch1('detection_method_name')
         base_file_name = (MultiCameraRecording & key).fetch1('video_base_filename')
-        # base_file_name = "_".join(base_file_name.split('_')[:-2])
-        output_file= f'./{base_file_name}_{estimation_method_name}_{detection_method_name}_smoothed.trc'
+        base_file_name = "_".join(base_file_name.split('_')[:-2])
+        output_file= f'{os.getcwd()}/{base_file_name}_{estimation_method_name}_{detection_method_name}_smoothed.trc'
         pts = HandPoseReconstruction.export_trc((HandPoseReconstruction&key), output_file, z_offset=0, addMovi=True, smooth=True, return_points=True)
-        
-        pathScaledModel = scale_model('Models', output_file, 'ARM_Hand_Wrist_Model.osim', '27scales.xml', ['r_x','r_y','r_z'])
-        pathOutputIK = IK_model('Models', output_file, pathScaledModel, '27IK.xml')
 
+        pathScaledModel = scale_model('./hand_detection/wrappers/opensim/Models', output_file, 'ARM_Hand_Wrist_Model.osim', '27scales.xml', ['r_x','r_y','r_z'])
+        pathOutputIK = IK_model('./hand_detection/wrappers/opensim/Models', output_file, pathScaledModel, '27IK.xml')
 
-        kp3d = self.extract_from_osim(pathOutputIK)
-
+        pathOutputMarker = pathOutputIK[:-4]
+        pathOutputMarker =  pathOutputMarker + '_ik_model_marker_locations.sto'
+        kp3d = self.extract_from_osim(pathOutputMarker, estimation_method_name)
 
         os.remove(output_file)
     #     python scaleModel.py -r 'Models' -trc '/home/pfirouzabadi/projects/Hand_Detection/trace_files/m002/m002_trial0_RTMPoseHand5_TopDown_smoothed.trc' \
@@ -891,7 +1014,7 @@ class OpenSim(dj.Computed):
         # # key["reprojection_loss"] = float(metrics[f"keypoint_loss_{i}"])
         self.insert1(key)
 
-    def extract_from_osim(self, filename):
+    def extract_from_osim(self, filename, method_name):
         import pandas as pd
         import numpy as np
         # Read the ".sto" file into a Pandas DataFrame
@@ -918,9 +1041,10 @@ class OpenSim(dj.Computed):
         #map the markers to joint_names to be exactly same as extracted previously
         markerKeysDict ={element: index for index, element in enumerate(markerKeys)}
         # Compare elements to original indices in joint_names
-        method_name = (HandPoseEstimationMethodLookup & self).fetch1("estimation_method_name")
+        # method_name = (HandPoseEstimationMethodLookup & (HandPoseReconstruction & self)).fetch1("estimation_method_name")
         joint_names = HandPoseEstimation.joint_names(method_name)
         movi_joints= [  
+                "sternum",#3
                 "R.clavicle",#2
                 "R.Shoulder.M",#39
                 "R.Elbow.Lateral",#41
@@ -935,9 +1059,130 @@ class OpenSim(dj.Computed):
 
         sorted_markerKeys = markerKeys[markerMapping]
         sorted_keypoints3dOSIM = keypoints3dOSIM[:,markerMapping,:]
+        print(markerMapping,markerKeys, sorted_markerKeys)
         # #add the ground back to the keypoints
         # for jj in range (sorted_keypoints3dOSIM.shape[1]):
         #     sorted_keypoints3dOSIM[:,jj] = sorted_keypoints3dOSIM[:, jj] + groundRef
         #Go back to mm from m
         kp3dOsim = sorted_keypoints3dOSIM * 1000 
         return kp3dOsim
+
+
+
+@schema
+class OpenSimReconstructionAnalysis(dj.Computed):
+    definition = """
+    -> OpenSimReconstruction
+    ---
+    pk_5              : float
+    pk_10             : float
+    pcks              : longblob
+    spatial_loss      : float
+    pose_noise        : float
+    """
+    def make(self,key):
+        # from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
+        from pose_pipeline import  VideoInfo
+        from multi_camera.datajoint.sessions import Recording
+        from multi_camera.analysis import fit_quality
+        import cv2
+        from multi_camera.analysis.camera import project_distortion, get_intrinsic, get_extrinsic, distort_3d
+        
+        kp3d = (OpenSimReconstruction & key).fetch1('keypoints')
+        # tables = Recording *  HandPoseEstimation * HandPoseEstimationMethodLookup * HandPoseReconstructionMethodLookup
+        camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('camera_name')
+
+        #First 21 keypoints is the right hand points
+        kp3d = kp3d[:, -21:, :]
+        calibration_key = (CalibratedRecording & key).fetch1("KEY")
+        camera_params, camera_names = (Calibration & calibration_key).fetch1("camera_calibration", "camera_names")
+
+        keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
+        #pad zeros for all cameras
+        N = max([len(k) for k in keypointsHPE])
+        keypointsHPE = np.stack(
+            [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
+        )
+
+        #pad zeros for 3d keypoints
+        kp3d = np.concatenate([kp3d, np.zeros([N - kp3d.shape[0], *kp3d.shape[1:]])], axis=0)
+        
+        # work out the order that matches the calibration (should normally match)
+        order = [list(camera_name).index(c) for c in camera_names]
+        points2d = np.stack([keypointsHPE[o][:, :21, :] for o in order], axis=0)
+
+        #Get the right hand compared to 3d keypoints
+        metrics2, thresh, confidence = fit_quality.reprojection_quality( kp3d[:, :, :3], camera_params, points2d[:,:,:21,:])
+        pck10 = metrics2[np.argmin(np.abs(thresh - 10)), np.argmin(np.abs(confidence - 0.5))]
+        pck5 = metrics2[np.argmin(np.abs(thresh - 5)), np.argmin(np.abs(confidence - 0.5))]
+        pcks = np.array([metrics2[np.argmin(np.abs(thresh - i)), np.argmin(np.abs(confidence - 0.5))].item() for i in range(16)])
+        
+        
+        #SETTING UP CALCULATION FOR SPATIAL ERROR
+        videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
+        keypoints2d = points2d
+        rvec = camera_params["rvec"]
+        rmats = [cv2.Rodrigues(np.array(r[None, :]))[0].T for r in rvec]
+
+        tvec = camera_params["tvec"]
+        rvec = camera_params["rvec"]
+        # Removed display function calls to prevent error
+        # Assuming camera_params['mtx'] and camera_params['dist'] are well-defined
+        video_keys = (videos).fetch("KEY")
+        fps = np.unique((VideoInfo & video_keys[0]).fetch1("fps"))
+        width = np.unique((VideoInfo & video_keys).fetch("width"))[0]
+        height = np.unique((VideoInfo & video_keys).fetch("height"))[0]
+
+        # Convert rotation vectors to rotation matrices
+        rmats = [cv2.Rodrigues(np.array(r[None, :]))[0].T for r in rvec]
+
+        pos = np.array([-R.dot(t) for R, t in zip(rmats, tvec)])
+
+        #CALCULATING THE SPATIAL ERROR
+        keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
+        SC= []
+        for ci in range(keypoints2d.shape[0]):
+            
+            # Extract the translation vector from the camera parameters
+            # Calculate the distance to the point
+            distance = np.linalg.norm(pos[ci,:] - kp3d[...,:3], axis=-1)
+            
+            projection_error = keypoints_2d_triangulated[ci,:,:21,:2] - keypoints2d[ci,:,:, :2]
+            # keypoint_conf = keypoints2d[ci,..., 2]
+            intrinsics = get_intrinsic(camera_params,ci)
+
+            # Extract the focal lengths from the camera parameters
+            focal_length_x = intrinsics[0, 0]  # assuming the focal length in x direction is at this location
+            focal_length_y = intrinsics[1, 1]  # assuming the focal length in y direction is at this location
+
+            # Calculate the FOVs
+            fov_x = 2 * np.arctan(width / (2 * focal_length_x))
+            fov_y = 2 * np.arctan(height / (2 * focal_length_y))
+            # Calculate the degree of view for each pixel
+            degree_per_pixel_x = fov_x / width
+            degree_per_pixel_y = fov_y / height
+
+            angular_error = np.array([degree_per_pixel_x, degree_per_pixel_y]) * projection_error
+            # Calculate the spatial errors
+            spatial_error_x = distance * np.tan(angular_error[...,0])
+            spatial_error_y = distance * np.tan(angular_error[...,1])
+            spatial_error = np.linalg.norm(np.array([spatial_error_x, spatial_error_y]),axis=0)
+            # Calculate the widths of the view at the distance of the object
+            # print('camera', ci, 'median error: ', np.median(spatial_error), 'mm')
+            # # Calculate the spatial errors
+            SC.append(np.mean(spatial_error))
+
+        #CALCULATING THE NOISE
+        point_difference = np.diff(kp3d/1000, axis=0)**2
+        diff_sum = np.sum(point_difference, axis=0) 
+        Noise_mjx = np.mean(diff_sum, axis=0)
+        
+        key['pk_5']= pck5.item()
+        key['pk_10']= pck10.item()
+        key['pcks']= pcks
+        
+        key['spatial_loss'] = np.median(SC).item()
+        key['pose_noise'] = np.mean(Noise_mjx).item()
+
+        self.insert1(key)
+
