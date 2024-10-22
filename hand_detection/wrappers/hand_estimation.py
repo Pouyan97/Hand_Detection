@@ -164,7 +164,7 @@ def plot_triangulated_keypoints(key, kp3d, only_osim = False,useBlurred = True, 
 
             kp2d_camera = np.asarray((HandPoseEstimation & video_keys[ci]).fetch1("keypoints_2d"))
             kp2d_camera = kp2d_camera.reshape(kp2d_camera.shape[0], -1, kp2d_camera.shape[-1])  
-            moviinds = np.array((2,39,41,43,44,57))
+            moviinds = np.array((3,2,39,40,41,42,43,44,57))
         
             movikeys = video_keys[ci].copy()
             # movikeys.pop('reconstruction_method')
