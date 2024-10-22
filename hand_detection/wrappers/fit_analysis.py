@@ -44,21 +44,21 @@ def GC_analysis(key, kp3d):
 def MPJPError(key, kp3d):
         calibration_key = (CalibratedRecording & key).fetch1("KEY")
         camera_params, camera_names = (Calibration & calibration_key).fetch1("camera_calibration", "camera_names")
-        keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
+
+        keypointsHPE, camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('keypoints_2d','camera_name')
+        # keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
         #pad zeros for all cameras
         N = max([len(k) for k in keypointsHPE])
         keypointsHPE = np.stack(
             [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
         )
-
-        #pad zeros for 3d keypoints
-        kp3d = np.concatenate([kp3d, np.zeros([N - kp3d.shape[0], *kp3d.shape[1:]])], axis=0)
-        
-        camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('camera_name')
         # work out the order that matches the calibration (should normally match)
         order = [list(camera_name).index(c) for c in camera_names]
         keypoints2d = np.stack([keypointsHPE[o][:, :21, :] for o in order], axis=0)
 
+        #pad zeros for 3d keypoints
+        kp3d = np.concatenate([kp3d, np.zeros([N - kp3d.shape[0], *kp3d.shape[1:]])], axis=0)
+        kp3d = np.where(kp3d[:]==0, np.nan, kp3d[:])
         #SETTING UP CALCULATION FOR SPATIAL ERROR
         videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
         rvec = camera_params["rvec"]
@@ -76,18 +76,16 @@ def MPJPError(key, kp3d):
         # Convert rotation vectors to rotation matrices
         rmats = [cv2.Rodrigues(np.array(r[None, :]))[0].T for r in rvec]
 
-        pos = np.array([-R.dot(t) for R, t in zip(rmats, tvec)])
+        pos = np.array([-R.dot(t) for R, t in zip(rmats, tvec)])*1000
 
         #CALCULATING THE SPATIAL ERROR
         keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
         SC= []
         for ci in range(keypoints2d.shape[0]):
-            
             # Extract the translation vector from the camera parameters
             # Calculate the distance to the point
             distance = np.linalg.norm(pos[ci,:] - kp3d[...,:3], axis=-1)
-            
-            projection_error = keypoints_2d_triangulated[ci,:,:21,:2] - keypoints2d[ci,:,:, :2]
+            projection_error = keypoints_2d_triangulated[ci,:,:,:2] - keypoints2d[ci,:,:, :2]
             # keypoint_conf = keypoints2d[ci,..., 2]
             intrinsics = get_intrinsic(camera_params,ci)
 
@@ -110,14 +108,14 @@ def MPJPError(key, kp3d):
             # Calculate the widths of the view at the distance of the object
             # print('camera', ci, 'median error: ', np.median(spatial_error), 'mm')
             # # Calculate the spatial errors
-            SC.append(np.mean(spatial_error))
+            SC.append(np.nanmean(spatial_error))
 
         #CALCULATING THE NOISE
         point_difference = np.diff(kp3d/1000, axis=0)**2
-        diff_sum = np.sum(point_difference, axis=0) 
-        Noise_mjx = np.mean(diff_sum, axis=0)
+        diff_sum = np.nansum(point_difference, axis=0) 
+        Noise_mjx = np.nanmean(diff_sum, axis=0)
 
         
         MPJPE = np.median(SC).item()
-        Noise = np.mean(Noise_mjx).item()
+        Noise = np.nanmean(Noise_mjx).item()
         return MPJPE, Noise
