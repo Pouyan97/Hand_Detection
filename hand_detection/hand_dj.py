@@ -942,10 +942,149 @@ class OpenSimReconstructionAnalysis(dj.Computed):
 
         key['pk_5']= pck5
         key['pk_10']= pck10
-        key['pks']= pcks
+        key['pcks']= pcks
         
         key['spatial_loss'] = MPJPE
         key['pose_noise'] = Noise
 
         self.insert1(key)
 
+
+@schema
+class MJXReconstructionVariableMethodLookup(dj.Lookup):
+    definition = """
+    # Variables needed for MJX reconstruction -Method_number -Method_name -XML_path -Regularization
+    reconstruction_method      : int
+    ---
+    reconstruction_method_name : varchar(100)
+    xml_path                   : varchar(100)
+    regularization             : int
+    """
+    contents = [
+        {"reconstruction_method": 0, "reconstruction_method_name": "28 markers model", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_26markers.xml",                    "regularization":1e3},
+        {"reconstruction_method": 1, "reconstruction_method_name": "30 markers model", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_30markers.xml",                    "regularization":1e3},
+        {"reconstruction_method": 2, "reconstruction_method_name": "28 markers post 1e3", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_26markers_post_submission.xml", "regularization":1e3},
+        {"reconstruction_method": 3, "reconstruction_method_name": "28 markers 1e2", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_26markers.xml",                      "regularization":1e2},
+        {"reconstruction_method": 4, "reconstruction_method_name": "30 markers 1e2", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_30markers.xml",                      "regularization":1e2},
+        {"reconstruction_method": 5, "reconstruction_method_name": "28 markers post 1e2", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_26markers_post_submission.xml", "regularization":1e2},
+        {"reconstruction_method": 6, "reconstruction_method_name": "28 markers 1e1", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_26markers.xml",                      "regularization":1e1},
+        {"reconstruction_method": 7, "reconstruction_method_name": "30 markers 1e1", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_30markers.xml",                      "regularization":1e1},
+        {"reconstruction_method": 8, "reconstruction_method_name": "28 markers post 1e1", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_26markers_post_submission.xml", "regularization":1e1},
+        {"reconstruction_method": 9, "reconstruction_method_name": "28 markers", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_26markers.xml",                          "regularization":1e4},
+        {"reconstruction_method": 10,"reconstruction_method_name": "30 markers 1e4", "xml_path" : "data/mjc_anton/ARM_Hand_Wrist_Model_30markers.xml",                      "regularization":1e4},
+    ]
+
+@schema
+class MJXReconstructionVariableMethod(dj.Manual):
+    definition = """
+    # Information regarding the estimation and detection method stored here
+    -> CalibratedRecording
+    -> MJXReconstructionVariableMethodLookup
+    estimation_method       : int
+    detection_method        : int
+    ---
+    """
+
+
+@schema
+class MJXReconstructionVariable(dj.Computed): 
+    definition = """
+    -> MJXReconstructionVariableMethod
+    ---
+    body_scale             : longblob
+    site_offsets           : longblob
+    mean_reprojection_loss : float
+    site_offset_loss       : float
+    equality_constraints   : float
+    timestamps             : longblob   
+    qpos                   : longblob
+    qvel                   : longblob
+    joints                 : longblob
+    sites                  : longblob
+    """   
+    def make(self,key):
+        from body_models.biomechanics_mjx.implicit_fitting import fit_keys, fit_key
+        from body_models.biomechanics_mjx import ForwardKinematics
+        import jax
+        from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
+
+        from pose_pipeline import VideoInfo
+
+        # if key['reconstruction_method'] == 0:
+        #    key.pop('reconstruction_method')
+            #   model, metrics = fit_key(key, max_iters=40000)
+        #elif key['reconstruction_method'] == 1:
+        key['xml_path'] = (MJXReconstructionVariableMethodLookup & key).fetch1('xml_path')
+        key['regularization'] = (MJXReconstructionVariableMethodLookup & key).fetch1('regularization')
+        model, metrics = fit_key(key, max_iters=40000)
+
+        # biomechanical_reconstruction_settings = (BiomechanicalReconstructionSettingsLookup & key).fetch1("biomechanical_reconstruction_settings")
+        # print(key['estimation_method'])
+        key["body_scale"] = np.array(model.body_scale)
+        key["site_offsets"] = np.array(model.site_offsets)
+        key["mean_reprojection_loss"] = float(metrics["keypoints_loss"])
+        key["site_offset_loss"] = float(metrics["site_offset"])
+        key["equality_constraints"] = float(metrics["equality_constraints"])
+        # key["delta_camera_loss"] = float(metrics["delta_camera"]) if "delta_camera" in metrics else 0.0
+
+        timestamps, keypoints2d = fetch_keypoints(key)
+
+        trial_result = model(timestamps, return_full=True, fast_inference=True)
+
+        # key.update(base_key)
+
+        key["timestamps"] = timestamps
+        key["qpos"] = np.array(trial_result.qpos)
+        key["qvel"] = np.array(trial_result.qvel)
+        key["joints"] = np.array(trial_result.xpos)
+        key["sites"] = np.array(trial_result.site_xpos)
+
+
+        key.pop("xml_path")
+        key.pop("regularization")
+
+
+        # key["reprojection_loss"] = float(metrics[f"keypoint_loss_{i}"])
+        self.insert1(key)
+
+@schema
+class MJXReconstructionVariableAnalysis(dj.Computed):
+    definition = """
+    -> MJXReconstructionVariable
+    ---
+    pk_5              : float
+    pk_10             : float
+    pks               : longblob 
+    spatial_loss      : float
+    pose_noise        : float
+    """
+    def make(self,key):
+        # from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
+        from pose_pipeline import  VideoInfo
+        from multi_camera.datajoint.sessions import Recording
+        from multi_camera.analysis import fit_quality
+        import cv2
+        from multi_camera.analysis.camera import project_distortion, get_intrinsic, get_extrinsic, distort_3d
+        
+        from hand_detection.wrappers.fit_analysis import MPJPError, GC_analysis
+        # timestamps, keypoints2d = fetch_keypoints(key)
+
+        # pose = (MJXReconstruction & key).fetch1('qpos')
+        pred = (MJXReconstructionVariable & key).fetch1('sites')
+        #Last 21 keypoints is the hand points
+        kp3dMuj = pred*1000
+        # kp3dMuj = trajectory(timestamps)*1000
+        #RIGHT HAND without the MOVI stuff
+        kp3dMuj = kp3dMuj[:, -21:, :]
+        
+        MPJPE, Noise = MPJPError(key, kp3dMuj)
+        pck5, pck10, pcks = GC_analysis(key, kp3dMuj)
+
+        key['pk_5']= pck5
+        key['pk_10']= pck10
+        key['pks']= pcks
+        
+        key['spatial_loss'] = MPJPE
+        key['pose_noise'] = Noise
+
+        self.insert1(key)
