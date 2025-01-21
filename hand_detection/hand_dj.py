@@ -153,7 +153,14 @@ class HandPoseEstimation(dj.Computed):
                       'TIP5','DIP5', 'PIP5','MCP5',
             ]
 
-
+        elif method == "bimanual":
+            return ['Wrist','CMC1','MCP1','IP1','TIP1','MCP2','PIP2',
+        'DIP2', 'TIP2', 'MCP3', 'PIP3', 'DIP3','TIP3', 'MCP4',
+        'PIP4', 'DIP4', 'TIP4', 'MCP5', 'PIP5','DIP5', 'TIP5',
+        'Wrist_l', 'CMC1_l', 'MCP1_l', 'IP1_l', 'TIP1_l', 'MCP2_l', 'PIP2_l',
+        'DIP2_l', 'TIP2_l', 'MCP3_l', 'PIP3_l', 'DIP3_l', 'TIP3_l', 'MCP4_l',
+        'PIP4_l', 'DIP4_l', 'TIP4_l', 'MCP5_l', 'PIP5_l', 'DIP5_l', 'TIP5_l'
+        ]
 @schema
 class HandPoseEstimationVideo(dj.Computed):
     definition = """
