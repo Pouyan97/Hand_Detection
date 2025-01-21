@@ -17,9 +17,9 @@ def mmpose_hand_det(key, method='RTMDet'):
     from mmpose.evaluation.functional import nms
 
     video =  Video.get_robust_reader(key, return_cap=False) # returning video allows deleting it
-
+    path = os.path.dirname(os.path.abspath(__file__))
     if method == 'RTMDet':
-        detection_cfg = 'wrappers/models/rtmdet_nano_320-8xb32_hand.py'
+        detection_cfg = os.path.join(path, 'models/rtmdet_nano_320-8xb32_hand.py')
         detection_ckpt = 'https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmdet_nano_8xb32-300e_hand-267f9c8f.pth'
         device = 'cpu'
 
@@ -82,9 +82,33 @@ def make_bbox_from_keypoints(
         keypoints=[],
         width = 120,
         height = 120,
+        method = 'halpe',
         ):
-    right_hand_keypoints = keypoints[:,-21:,:2]
-    left_hand_keypoints = keypoints[:,-42:-21,:2]
+    if method == 'halpe':
+        right_hand_keypoints = keypoints[:,-21:,:2]
+        left_hand_keypoints = keypoints[:,-42:-21,:2]
+    elif method == 'movi':
+        #define keypoints for right and left hand and calculate hand length and width
+        wristR = keypoints[:,85,:2]
+        wristL = keypoints[:,77,:2]
+        handR = keypoints[:,82,:2]
+        handL = keypoints[:,74,:2]
+        finR = keypoints[:,45,:2]
+        finL = keypoints[:,14,:2]
+        thumbR = keypoints[:,59,:2]
+        thumbL = keypoints[:,28,:2]
+        Rhand_length = handR + (handR-wristR)
+        Lhand_length = handL+ (handL-wristL)
+        Rhand_width1 = finR+ (finR-wristR)
+        Rhand_width2 = thumbR+ (thumbR-wristR)
+        Lhand_width1 = finL+ (finL-wristL)
+        Lhand_width2 = thumbL+ (thumbL-wristL)
+        Rhand_kp_idx = np.array([59,45,82,85,43,44])
+        Lhand_kp_idx = np.array([12,13,14,28,74,77])
+        # Create a definition of the right and left hand keypoints that can define the bounding box. 
+        right_hand_keypoints = np.concatenate((keypoints[:,Rhand_kp_idx,:2],Rhand_length[:,None,:],Rhand_width1[:,None,:],Rhand_width2[:,None,:]),axis=1)
+        left_hand_keypoints = np.concatenate((keypoints[:,Lhand_kp_idx,:2],Lhand_length[:,None,:],Lhand_width1[:,None,:],Lhand_width2[:,None,:]),axis=1)
+    
     # Create a bounding box for each point on keypoints
     bboxes = []
     for i in range(keypoints.shape[0]):

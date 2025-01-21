@@ -2,7 +2,7 @@ import datajoint as dj
 import numpy as np
 
 from multi_camera.datajoint.multi_camera_dj import MultiCameraRecording, SingleCameraVideo, CalibratedRecording
-from pose_pipeline.pipeline import TopDownPerson, BlurredVideo
+from pose_pipeline.pipeline import TopDownPerson, BlurredVideo, Video
 from multi_camera.datajoint.calibrate_cameras import Calibration
 
 schema = dj.schema("hand_detection")
@@ -19,6 +19,7 @@ class HandBboxMethodLookup(dj.Lookup):
         {"detection_method": 0, "detection_method_name": "RTMDet"},
         {"detection_method": 1, "detection_method_name": "TopDown"},
         {"detection_method": 2, "detection_method_name": "3Dto2D"},
+        {"detection_method": 3, "detection_method_name": "MoviTopDown"},
         
     ]
 
@@ -71,6 +72,13 @@ class HandBbox(dj.Computed):
             key["bboxes"] = bboxes
             key["num_boxes"] = num_boxes
 
+        elif (HandBboxMethodLookup & key).fetch1("detection_method_name") == "MoviTopDown":
+            from hand_detection.wrappers.hand_bbox import make_bbox_from_keypoints
+            keypoints = (TopDownPerson & key & "top_down_method=12").fetch1("keypoints")
+            num_boxes, bboxes = make_bbox_from_keypoints(keypoints, method='movi')
+            key["bboxes"] = bboxes
+            key["num_boxes"] = num_boxes
+        
         self.insert1(key)
 
 @schema
@@ -578,6 +586,7 @@ class MJXReconstructionMethod(dj.Manual):
     ---
     """
 
+###############################DEPRECATED################################
 @schema
 class MJXReconstruction(dj.Computed): 
     definition = """
