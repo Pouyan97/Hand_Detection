@@ -9,7 +9,7 @@ from multi_camera.datajoint.calibrate_cameras import Calibration
 from multi_camera.analysis.camera import project_distortion, get_intrinsic, get_extrinsic, distort_3d
 from hand_detection.hand_dj import HandPoseEstimation, HandPoseEstimationMethodLookup, HandPoseReconstructionMethodLookup
         
-def GC_analysis(key, kp3d):
+def GC_analysis(key, kp3d, smooth=False):
         # kp3d = (OpenSimReconstruction & key).fetch1('keypoints')
         # tables = Recording *  HandPoseEstimation * HandPoseEstimationMethodLookup * HandPoseReconstructionMethodLookup
         camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('camera_name')
@@ -21,7 +21,7 @@ def GC_analysis(key, kp3d):
 
         keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
         #pad zeros for all cameras
-        N = max([len(k) for k in keypointsHPE])
+        N = max([max([len(k) for k in keypointsHPE]),kp3d.shape[0]])
         keypointsHPE = np.stack(
             [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
         )
@@ -32,7 +32,21 @@ def GC_analysis(key, kp3d):
         # work out the order that matches the calibration (should normally match)
         order = [list(camera_name).index(c) for c in camera_names]
         points2d = np.stack([keypointsHPE[o][:, :21, :] for o in order], axis=0)
+        if smooth:
+            import scipy
 
+            for c in range(points2d.shape[0]):
+                for i in range(points2d.shape[2]):
+                    for j in range(2): #smooth over x and y individually
+                        points2d[c, :, i, j] = scipy.signal.medfilt(points2d[c, :, i, j], 5)
+
+            points2d[...,:] = np.where(points2d[...,:]==0, np.nan, points2d[...,:])
+        
+
+
+        if 'cameras_ablated' in key:
+            camera_idx = [camera_names.index(str(c)) for c in key['cameras_ablated']]
+            points2d[camera_idx,...,-1] = 0.0
         #Get the right hand compared to 3d keypoints
         metrics2, thresh, confidence = fit_quality.reprojection_quality( kp3d[:, :, :3], camera_params, points2d[:,:,:21,:])
         pck10 = metrics2[np.argmin(np.abs(thresh - 10)), np.argmin(np.abs(confidence - 0.5))]
@@ -41,14 +55,14 @@ def GC_analysis(key, kp3d):
         
         return pck5.item(), pck10.item(), pcks
 
-def MPJPError(key, kp3d):
+def MPJPError(key, kp3d, smooth = False):
         calibration_key = (CalibratedRecording & key).fetch1("KEY")
         camera_params, camera_names = (Calibration & calibration_key).fetch1("camera_calibration", "camera_names")
 
         keypointsHPE, camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('keypoints_2d','camera_name')
         # keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
         #pad zeros for all cameras
-        N = max([len(k) for k in keypointsHPE])
+        N = max([max([len(k) for k in keypointsHPE]),kp3d.shape[0]])
         keypointsHPE = np.stack(
             [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
         )
@@ -58,6 +72,7 @@ def MPJPError(key, kp3d):
 
         #pad zeros for 3d keypoints
         kp3d = np.concatenate([kp3d, np.zeros([N - kp3d.shape[0], *kp3d.shape[1:]])], axis=0)
+        # set zeros to nans for the 3d keypoints to avoid errors..... Also zero confidence keypoints shouldn't be considered.
         kp3d = np.where(kp3d[:]==0, np.nan, kp3d[:])
         #SETTING UP CALCULATION FOR SPATIAL ERROR
         videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
@@ -82,6 +97,17 @@ def MPJPError(key, kp3d):
         keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
         SC= []
         for ci in range(keypoints2d.shape[0]):
+            if 'cameras_ablated' in key:
+                camera_idx = [camera_names.index(str(c)) for c in key['cameras_ablated']]
+                if ci in camera_idx:
+                    continue
+            if smooth:
+                import scipy
+                for i in range(keypoints2d.shape[2]):
+                    for j in range(2): #smooth over x and y individually
+                        keypoints2d[ci, :, i, j] = scipy.signal.medfilt(keypoints2d[ci, :, i, j], 5)
+
+                keypoints2d[...,:] = np.where(keypoints2d[...,:]==0, np.nan, keypoints2d[...,:])
             # Extract the translation vector from the camera parameters
             # Calculate the distance to the point
             distance = np.linalg.norm(pos[ci,:] - kp3d[...,:3], axis=-1)
