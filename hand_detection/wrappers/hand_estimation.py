@@ -118,10 +118,10 @@ def overlay_hand_keypoints(video, output_file, keypoints, bboxes):
         cap.release()
 
 
-def plot_triangulated_keypoints(key, kp3d, only_osim = False,useBlurred = True, crop_bbox = True, camera_id = None):
+def plot_triangulated_keypoints(key, kp3d = None, only_osim = False,useBlurred = True, crop_bbox = True, camera_id = None):
         from hand_detection.hand_dj import HandPoseEstimation, HandBbox, HandPoseReconstruction
         from multi_camera.datajoint.sessions import Recording
-        from multi_camera.datajoint.multi_camera_dj import Calibration, MultiCameraRecording, SingleCameraVideo
+        from multi_camera.datajoint.multi_camera_dj import Calibration, MultiCameraRecording, SingleCameraVideo,CalibratedRecording 
         from multi_camera.analysis.camera import project_distortion, get_intrinsic, get_extrinsic, distort_3d
 
         from pose_pipeline.pipeline import Video, VideoInfo, BlurredVideo, TopDownPerson
@@ -129,14 +129,17 @@ def plot_triangulated_keypoints(key, kp3d, only_osim = False,useBlurred = True, 
         import cv2
 
         videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
-        camera_params= (Recording * Calibration & key).fetch1("camera_calibration")
-        camera_names = (Recording * Calibration & key).fetch1("camera_names")
+        camera_params= (CalibratedRecording * Calibration & key).fetch1("camera_calibration")
+        camera_names = (CalibratedRecording * Calibration & key).fetch1("camera_names")
         video_keys = (videos).fetch("KEY")
         fps = np.unique((VideoInfo & video_keys[0]).fetch1("fps"))
         width = np.unique((VideoInfo & video_keys).fetch("width"))[0]
         height = np.unique((VideoInfo & video_keys).fetch("height"))[0]
-
-        keypoints_2d_MJX = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
+        if kp3d is None:
+            only_2D = True
+        else:
+            only_2D = False
+            keypoints_2d_MJX = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
         # keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
         num_cameras = range(len(camera_names))
         if camera_id is not None:
@@ -187,18 +190,19 @@ def plot_triangulated_keypoints(key, kp3d, only_osim = False,useBlurred = True, 
             def render_overlay(frame, idx, frame_idx):
                 raw_frame = frame.copy()
 
-                if not only_osim:
+                if not only_osim or only_2D:
                     # #Red
                     # color = (30, 30, 200)
                     # raw_frame = draw_keypoints(raw_frame, np.array(keypoints_2d_triangulated[idx, frame_idx]), radius=5, threshold=0.10, border_color=color, color=color)
 
                     #Green
                     color = (30, 200, 30)
-                    raw_frame = draw_keypoints(raw_frame, np.array(kp2d_camera[frame_idx,:21]), radius=10, threshold=0.10, border_color=color, color=color)
+                    raw_frame = draw_keypoints(raw_frame, np.array(kp2d_camera[frame_idx,:]), radius=10, threshold=0.10, border_color=color, color=color)
                     
-                #Blue
-                color = (200, 30, 30)
-                raw_frame = draw_keypoints(raw_frame, np.array(keypoints_2d_MJX[idx, frame_idx]), radius=10, threshold=0.10, border_color=color, color=color)
+                if not only_2D or only_osim:
+                    #Blue
+                    color = (200, 30, 30)
+                    raw_frame = draw_keypoints(raw_frame, np.array(keypoints_2d_MJX[idx, frame_idx]), radius=10, threshold=0.10, border_color=color, color=color)
                     
                 raw_frame = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2RGB)
 
@@ -223,7 +227,7 @@ def plot_triangulated_keypoints(key, kp3d, only_osim = False,useBlurred = True, 
             def make_frames():
                 list_frames = []
                 vid.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                for frame_num in tqdm(range(keypoints_2d_MJX.shape[1])):#range(260,290):
+                for frame_num in tqdm(range(kp2d_camera.shape[0])):#range(260,290):
                     # print(frame_num, '|', kp3d.shape[0])
                     # vid.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
                     _, frame = vid.read()
@@ -247,7 +251,25 @@ def plot_3d_reprojected_keypoints(key, kp3d, only_osim = False, useBlurred = Tru
             col = i % n_cols
             grid[row * img.shape[0] : (row + 1) * img.shape[0], col * img.shape[1] : (col + 1) * img.shape[1], :] = img
         return grid
+    def save_collated_video(grid):
+        from hand_detection.hand_dj import HandPoseEstimationMethodLookup,HandPoseEstimation
+        method = (HandPoseEstimationMethodLookup & key).fetch1('estimation_method_name')
+        prefix= ' '.join((HandPoseEstimation & key).fetch('filename')[0].split('_')[:-2])
 
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(f'./{prefix}_{method}.mp4', fourcc, 29, (grid[0].shape[1], grid[0].shape[0]))
+        for frame in tqdm(grid, desc="Writing"):
+            # cv2.putText(frame,  
+            #             method+'  |  green: 2d detections  |  blue: mjx',  
+            #             (50, 50),  
+            #             cv2.FONT_HERSHEY_SIMPLEX , 1,  
+            #             (0, 255, 255),  
+            #             2,  
+            #             cv2.LINE_4) 
+            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        writer.release()
     # collate the results into a grid
     grid = [images_to_grid(r) for r in zip(*results)]
+    save_collated_video(grid)
     return results, grid
+
