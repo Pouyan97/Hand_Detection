@@ -21,7 +21,7 @@ def GC_analysis(key, kp3d, smooth=False):
 
         keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
         #pad zeros for all cameras
-        N = max([max([len(k) for k in keypointsHPE]),kp3d.shape[0]])
+        N = max([len(k) for k in keypointsHPE])
         keypointsHPE = np.stack(
             [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
         )
@@ -31,7 +31,7 @@ def GC_analysis(key, kp3d, smooth=False):
         
         # work out the order that matches the calibration (should normally match)
         order = [list(camera_name).index(c) for c in camera_names]
-        points2d = np.stack([keypointsHPE[o][:, :21, :] for o in order], axis=0)
+        points2d = np.stack([keypointsHPE[o][:, :kp3d.shape[1], :] for o in order], axis=0)
         if smooth:
             import scipy
 
@@ -48,7 +48,7 @@ def GC_analysis(key, kp3d, smooth=False):
             camera_idx = [camera_names.index(str(c)) for c in key['cameras_ablated']]
             points2d[camera_idx,...,-1] = 0.0
         #Get the right hand compared to 3d keypoints
-        metrics2, thresh, confidence = fit_quality.reprojection_quality( kp3d[:, :, :3], camera_params, points2d[:,:,:21,:])
+        metrics2, thresh, confidence = fit_quality.reprojection_quality( kp3d[:, :, :3], camera_params, points2d[:,:,:,:])
         pck10 = metrics2[np.argmin(np.abs(thresh - 10)), np.argmin(np.abs(confidence - 0.5))]
         pck5 = metrics2[np.argmin(np.abs(thresh - 5)), np.argmin(np.abs(confidence - 0.5))]
         pcks = np.array([metrics2[np.argmin(np.abs(thresh - i)), np.argmin(np.abs(confidence - 0.5))].item() for i in range(16)])
@@ -62,13 +62,13 @@ def MPJPError(key, kp3d, return_keypoint_errors = False, smooth = False):
         keypointsHPE, camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('keypoints_2d','camera_name')
         # keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
         #pad zeros for all cameras
-        N = max([max([len(k) for k in keypointsHPE]),kp3d.shape[0]])
+        N = max([len(k) for k in keypointsHPE]),kp3d.shape[0]
         keypointsHPE = np.stack(
             [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
         )
         # work out the order that matches the calibration (should normally match)
         order = [list(camera_name).index(c) for c in camera_names]
-        keypoints2d = np.stack([keypointsHPE[o][:, :21, :] for o in order], axis=0)
+        keypoints2d = np.stack([keypointsHPE[o][:, :kp3d.shape[1], :] for o in order], axis=0)
 
         #pad zeros for 3d keypoints
         kp3d = np.concatenate([kp3d, np.zeros([N - kp3d.shape[0], *kp3d.shape[1:]])], axis=0)
