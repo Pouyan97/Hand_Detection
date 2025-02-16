@@ -62,7 +62,7 @@ def MPJPError(key, kp3d, return_keypoint_errors = False, smooth = False):
         keypointsHPE, camera_name = (SingleCameraVideo * MultiCameraRecording * HandPoseEstimation & key).fetch('keypoints_2d','camera_name')
         # keypointsHPE = (HandPoseEstimation & key).fetch('keypoints_2d')
         #pad zeros for all cameras
-        N = max([len(k) for k in keypointsHPE]),kp3d.shape[0]
+        N = max([len(k) for k in keypointsHPE])
         keypointsHPE = np.stack(
             [np.concatenate([k, np.zeros([N - k.shape[0], *k.shape[1:]])], axis=0) for k in keypointsHPE], axis=0
         )
