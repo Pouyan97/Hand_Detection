@@ -55,7 +55,7 @@ def GC_analysis(key, kp3d, smooth=False):
         
         return pck5.item(), pck10.item(), pcks
 
-def MPJPError(key, kp3d, smooth = False):
+def MPJPError(key, kp3d, return_keypoint_errors = False, smooth = False):
         calibration_key = (CalibratedRecording & key).fetch1("KEY")
         camera_params, camera_names = (Calibration & calibration_key).fetch1("camera_calibration", "camera_names")
 
@@ -96,6 +96,7 @@ def MPJPError(key, kp3d, smooth = False):
         #CALCULATING THE SPATIAL ERROR
         keypoints_2d_triangulated = np.array([project_distortion(camera_params, i, kp3d) for i in range(camera_params["mtx"].shape[0])])
         SC= []
+        keypoints_errors = []
         for ci in range(keypoints2d.shape[0]):
             if 'cameras_ablated' in key:
                 camera_idx = [camera_names.index(str(c)) for c in key['cameras_ablated']]
@@ -134,8 +135,8 @@ def MPJPError(key, kp3d, smooth = False):
             # Calculate the widths of the view at the distance of the object
             # print('camera', ci, 'median error: ', np.median(spatial_error), 'mm')
             # # Calculate the spatial errors
+            keypoints_errors.append(spatial_error)
             SC.append(np.nanmean(spatial_error))
-
         #CALCULATING THE NOISE
         point_difference = np.diff(kp3d/1000, axis=0)**2
         diff_sum = np.nansum(point_difference, axis=0) 
@@ -144,4 +145,6 @@ def MPJPError(key, kp3d, smooth = False):
         
         MPJPE = np.median(SC).item()
         Noise = np.nanmean(Noise_mjx).item()
+        if return_keypoint_errors:
+            return MPJPE, Noise, keypoints_errors
         return MPJPE, Noise
