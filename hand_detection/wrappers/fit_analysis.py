@@ -55,7 +55,7 @@ def GC_analysis(key, kp3d, smooth=False):
         
         return pck5.item(), pck10.item(), pcks
 
-def MPJPError(key, kp3d, return_keypoint_errors = False, smooth = False):
+def MPJPError(key, kp3d, return_keypoint_errors = False, smooth = False, threshold = 0.5):
         calibration_key = (CalibratedRecording & key).fetch1("KEY")
         camera_params, camera_names = (Calibration & calibration_key).fetch1("camera_calibration", "camera_names")
 
@@ -112,7 +112,13 @@ def MPJPError(key, kp3d, return_keypoint_errors = False, smooth = False):
             # Extract the translation vector from the camera parameters
             # Calculate the distance to the point
             distance = np.linalg.norm(pos[ci,:] - kp3d[...,:3], axis=-1)
-            projection_error = keypoints_2d_triangulated[ci,:,:,:2] - keypoints2d[ci,:,:, :2]
+            #Find error of most confident keypoints
+            projection_error = np.where(
+                keypoints2d[ci,...,2][...,None] > threshold, 
+                keypoints_2d_triangulated[ci,:,:,:2] - keypoints2d[ci,:,:, :2], 
+                np.nan
+                )
+            # projection_error = keypoints_2d_triangulated[ci,:,:,:2] - keypoints2d[ci,:,:, :2]
             # keypoint_conf = keypoints2d[ci,..., 2]
             intrinsics = get_intrinsic(camera_params,ci)
 
