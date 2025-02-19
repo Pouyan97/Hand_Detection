@@ -1055,6 +1055,7 @@ class OpensimReconstructionAnalysis(dj.Computed):
         
         key['spatial_loss'] = MPJPE
         key['pose_noise'] = Noise
+        key['keypoint_errors'] = kps_MPJPE
 
         self.insert1(key)
 
