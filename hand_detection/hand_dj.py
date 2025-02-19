@@ -1029,6 +1029,7 @@ class OpensimReconstructionAnalysis(dj.Computed):
     pcks              : longblob
     spatial_loss      : float
     pose_noise        : float
+    keypoint_errors   : longblob
     """
     def make(self,key):
         # from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
