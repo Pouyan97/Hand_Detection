@@ -149,7 +149,7 @@ def MPJPError(key, kp3d, return_keypoint_errors = False, smooth = False, thresho
         Noise_mjx = np.nanmean(diff_sum, axis=0)
 
         
-        MPJPE = np.median(SC).item()
+        MPJPE = np.nanmedian(SC).item()
         Noise = np.nanmean(Noise_mjx).item()
         if return_keypoint_errors:
             return MPJPE, Noise, keypoints_errors
