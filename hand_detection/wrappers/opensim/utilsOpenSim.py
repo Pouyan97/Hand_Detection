@@ -132,14 +132,15 @@ def runScaleTool(pathGenericSetupFile, pathGenericModel, subjectMass,
     
     # Disable tasks of dofs that are locked and markers that are not present.
     model = opensim.Model(pathUpdGenericModel)
+    model.initSystem()
     coordNames = []
-    for coord in model.getCoordinateSet():
-        if len(locked_joints)>0:
-            if coord.getName() in locked_joints:
-                print(coord.getName(), ' -> Coordinate Locked')
-                coord.set_locked(True)
-        if not coord.getDefaultLocked():
-            coordNames.append(coord.getName())            
+    # for coord in model.getCoordinateSet():
+    #     if len(locked_joints)>0:
+    #         if coord.getName() in locked_joints:
+    #             print(coord.getName(), ' -> Coordinate Locked')
+    #             coord.set_locked(True)
+    #     if not coord.getDefaultLocked():
+    #         coordNames.append(coord.getName())            
     modelMarkerNames = [marker.getName() for marker in model.getMarkerSet()]          
               
     for task in markerPlacer.getIKTaskSet():
@@ -177,20 +178,32 @@ def runScaleTool(pathGenericSetupFile, pathGenericModel, subjectMass,
                 print('There were no marker pairs in {}, so this measurement \
                       is not applied.'.format(meas.getName()))
     # Run scale tool.     
+    opensim.Logger.setLevel(opensim.Logger.Level_Info)
     scaleTool.printToXML(pathOutputSetup)     
-    # scaleTool.run()       
-    command = 'opensim-cmd -o error' + ' run-tool ' + pathOutputSetup
-    os.system(command) 
+    # scaleTool.run()   
+    modelScaler.processModel(model.updModel())
+    markerPlacer.processModel(model.updModel())#, scaleTool.getPathToSubject())  
+    state = model.getWorkingState()
+    for coord in model.getCoordinateSet():
+        if len(locked_joints)>0:
+            if coord.getName() in locked_joints:
+                print(coord.getName(), ' -> Coordinate Locked')
+                coord.set_locked(True)       
+        curr_state_value = coord.getValue(state)
+        coord.setDefaultValue(curr_state_value)
+    model.printToXML(pathOutputModel)
+    # command = 'opensim-cmd -o error' + ' run-tool ' + pathOutputSetup
+    # os.system(command) 
     
     # Sanity check
-    scaled_model = opensim.Model(pathOutputModel)
-    bodySet = scaled_model.getBodySet()
-    nBodies = bodySet.getSize()
-    scale_factors = np.zeros((nBodies, 3))
-    for i in range(nBodies):
-        bodyName = bodySet.get(i).getName()
-        body = bodySet.get(bodyName)
-        print(bodyName)
+    # scaled_model = opensim.Model(pathOutputModel)
+    # bodySet = scaled_model.getBodySet()
+    # # nBodies = bodySet.getSize()
+    # scale_factors = np.zeros((nBodies, 3))
+    # for i in range(nBodies):
+    #     bodyName = bodySet.get(i).getName()
+    #     body = bodySet.get(bodyName)
+    #     print(bodyName)
         # attached_geometry = body.get_attached_geometry(0)
         # scale_factors[i, :] = attached_geometry.get_scale_factors().to_numpy()
     # diff_scale = np.max(np.max(scale_factors, axis=0)-
@@ -221,11 +234,13 @@ def runIKTool(pathGenericSetupFile, pathScaledModel, pathTRCFile,
     pathOutputSetup =  os.path.join(
         pathOutputFolder, 'Setup_IK_' + IKFileName + '.xml')
     #lock joints on model
-    # model = opensim.Model(pathScaledModel)
-    # for coord in model.getCoordinateSet():
-    #     if coord.getName() in locked_joints:
-    #         print(coord.getName(), ' -> Coordinate Locked')
-    #         coord.set_locked(True)
+    model = opensim.Model(pathScaledModel)
+    model.initSystem()
+    for coord in model.getCoordinateSet():
+        if coord.getName() in locked_joints:
+            print(coord.getName(), ' -> Coordinate Locked')
+            print(coord.getName(), coord.getValue(model.getWorkingState()))
+            coord.set_locked(True)
     # Setup IK tool.
     opensim.Logger.setLevelString('error')
     IKTool = opensim.InverseKinematicsTool(pathGenericSetupFile)            

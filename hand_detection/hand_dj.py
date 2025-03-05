@@ -313,7 +313,7 @@ class HandPoseReconstruction(dj.Computed):
         from matplotlib import pyplot as plt
         
         method_name = (HandPoseEstimationMethodLookup & self).fetch1("estimation_method_name")
-        joint_names = HandPoseEstimation.joint_names(method_name)
+        joint_names = HandPoseEstimation.joint_names(self,method_name)
 
         kp3d = self.fetch1("keypoints3d")
         timestamps = (VideoInfo * SingleCameraVideo & self).fetch("timestamps", limit=1)[0]
@@ -701,7 +701,7 @@ class MJXReconstruction(dj.Computed):
         from multi_camera.analysis.biomechanics.opensim import normalize_marker_names
 
         method_name = (HandPoseEstimationMethodLookup & self).fetch1("estimation_method_name")
-        joint_names = HandPoseEstimation.joint_names(method_name)
+        joint_names = HandPoseEstimation.joint_names(self,method_name)
         movi_joints= [  
                 "R.clavicle",#2
                 "R.Shoulder.M",#39
@@ -842,6 +842,9 @@ class OpenSimReconstruction(dj.Computed):
     -> HandPoseReconstruction
     ---
     keypoints             : longblob
+    timestamps=null       : longblob
+    joint_angles=null     : longblob
+    joint_names=null      : longblob
     """   
     def make(self,key):
         # from body_models.biomechanics_mjx.implicit_fitting import fit_keys, fit_key
@@ -853,30 +856,37 @@ class OpenSimReconstruction(dj.Computed):
         estimation_method_name =(HandPoseEstimationMethodLookup & key).fetch1('estimation_method_name')
         detection_method_name =(HandBboxMethodLookup & key).fetch1('detection_method_name')
         base_file_name = (MultiCameraRecording & key).fetch1('video_base_filename')
-        base_file_name = "_".join(base_file_name.split('_')[:-2])
-        output_file= f'{os.getcwd()}/{base_file_name}_{estimation_method_name}_{detection_method_name}_smoothed.trc'
-        pts = HandPoseReconstruction.export_trc((HandPoseReconstruction&key), output_file, z_offset=0, addMovi=True, smooth=True, return_points=True)
+        base_file_name = "_".join(base_file_name.split('.')[0].split('_')[:])
+        trc_file_name = f"{base_file_name}_{estimation_method_name}_{detection_method_name}.trc"
+        output_file= f'{os.getcwd()}/trace_files/{trc_file_name}'
+        pts = HandPoseReconstruction.export_trc((HandPoseReconstruction & key), output_file, z_offset=0, addMovi=True, smooth=True, return_points=True)
 
-        pathScaledModel = scale_model('./hand_detection/wrappers/opensim/Models', output_file, 'ARM_Hand_Wrist_Model.osim', '27scales.xml', ['r_x','r_y','r_z'])
-        pathOutputIK = IK_model('./hand_detection/wrappers/opensim/Models', output_file, pathScaledModel, '27IK.xml')
+        pathScaledModel = scale_model(f'{os.path.dirname(os.path.abspath(__file__))}/wrappers/opensim/Models', output_file, 'ARM_Hand_Wrist_Model.osim', '27scales.xml', ['r_x','r_y','r_z'])
+        pathOutputIK = IK_model(f'{os.path.dirname(os.path.abspath(__file__))}/wrappers/opensim/Models', output_file, pathScaledModel, '27IK.xml')
 
         pathOutputMarker = pathOutputIK[:-4]
         pathOutputMarker =  pathOutputMarker + '_ik_model_marker_locations.sto'
         kp3d = self.extract_from_osim(pathOutputMarker, estimation_method_name)
-
-        os.remove(output_file)
-    #     python scaleModel.py -r 'Models' -trc '/home/pfirouzabadi/projects/Hand_Detection/trace_files/m002/m002_trial0_RTMPoseHand5_TopDown_smoothed.trc' \
-    # -m ARM_Hand_Wrist_Model.osim -sc 27scales.xml -ik 27IK.xml -j r_x r_y r_z
-
-        key["keypoints"] = kp3d
-        # # key["reprojection_loss"] = float(metrics[f"keypoint_loss_{i}"])
+        time, joint_names, joint_angles = self.extract_motion_from_osim(pathOutputIK)
+        # os.remove(output_file)
+        key['timestamps'] = time
+        key['keypoints'] = kp3d
+        key['joint_angles'] = joint_angles
+        key['joint_names'] = joint_names
         self.insert1(key)
+        #     python scaleModel.py -r 'Models' -trc '/home/pfirouzabadi/projects/Hand_Detection/trace_files/m002/m002_trial0_RTMPoseHand5_TopDown_smoothed.trc' \
+        # -m ARM_Hand_Wrist_Model.osim -sc 27scales.xml -ik 27IK.xml -j r_x r_y r_z
 
     def extract_from_osim(self, filename, method_name):
         import pandas as pd
         import numpy as np
+        #read file until you get to the start of data
+        with open(filename, 'r') as file:
+            for lineNumber, line in enumerate(file):
+                if line.startswith('time'):
+                    break
         # Read the ".sto" file into a Pandas DataFrame
-        markerDF = pd.read_csv(filename, sep='\t',skiprows=6)
+        markerDF = pd.read_csv(filename, sep='\t',skiprows=lineNumber)
         # Display the DataFrame
         markerDFkeys = markerDF.keys().values
         # extract time and markers
@@ -900,7 +910,7 @@ class OpenSimReconstruction(dj.Computed):
         markerKeysDict ={element: index for index, element in enumerate(markerKeys)}
         # Compare elements to original indices in joint_names
         # method_name = (HandPoseEstimationMethodLookup & (HandPoseReconstruction & self)).fetch1("estimation_method_name")
-        joint_names = HandPoseEstimation.joint_names(method_name)
+        joint_names = HandPoseEstimation.joint_names(self,method_name)
         movi_joints= [  
                 "sternum",#3
                 "R.clavicle",#2
@@ -924,7 +934,27 @@ class OpenSimReconstruction(dj.Computed):
         #Go back to mm from m
         kp3dOsim = sorted_keypoints3dOSIM * 1000 
         return kp3dOsim
-
+    
+    def extract_motion_from_osim(self, filename):
+        import pandas as pd
+        import numpy as np
+        #read file until you get to the start of data
+        with open(filename, 'r') as file:
+            for lineNumber, line in enumerate(file):
+                if line.startswith('time'):
+                    break
+        # Read the ".sto" file into a Pandas DataFrame
+        jointDF = pd.read_csv(filename, sep='\t',skiprows=lineNumber)
+        # Extract Time
+        time = jointDF['time'].values
+        # Drop time
+        jointDF = jointDF.drop(columns =['time'])
+        # extract joints names
+        joint_names = np.array(jointDF.keys().values)
+        # extract joint angles
+        joint_angles = jointDF.values
+        return time, joint_names, joint_angles
+    
 @schema
 class OpensimReconstruction(dj.Computed): 
     definition = """
@@ -994,7 +1024,7 @@ class OpensimReconstruction(dj.Computed):
         markerKeysDict ={element: index for index, element in enumerate(markerKeys)}
         # Compare elements to original indices in joint_names
         # method_name = (HandPoseEstimationMethodLookup & (HandPoseReconstruction & self)).fetch1("estimation_method_name")
-        joint_names = HandPoseEstimation.joint_names(method_name)
+        joint_names = HandPoseEstimation.joint_names(self,method_name)
         movi_joints= [  
                 "sternum",#3
                 "R.clavicle",#2
@@ -1046,7 +1076,7 @@ class OpensimReconstructionAnalysis(dj.Computed):
         kp3d = kp3d[:, -21:, :]
 
         print(key['smoothing'])
-        MPJPE, Noise = MPJPError(key, kp3d, smooth = key['smoothing'])
+        MPJPE, Noise, kps_MPJPE = MPJPError(key, kp3d, smooth = key['smoothing'],return_keypoint_errors=True)
         pck5, pck10, pcks = GC_analysis(key, kp3d, smooth = key['smoothing'])
 
         key['pk_5']= pck5
@@ -1070,6 +1100,7 @@ class OpenSimReconstructionAnalysis(dj.Computed):
     pcks              : longblob
     spatial_loss      : float
     pose_noise        : float
+    keypoint_errors   : longblob
     """
     def make(self,key):
         # from body_models.biomechanics_mjx.implicit_fitting import fetch_keypoints
@@ -1085,8 +1116,7 @@ class OpenSimReconstructionAnalysis(dj.Computed):
         #First 21 keypoints is the right hand points
         kp3d = kp3d[:, -21:, :]
 
-        
-        MPJPE, Noise = MPJPError(key, kp3d)
+        MPJPE, Noise, kps_MPJPE = MPJPError(key, kp3d, return_keypoint_errors=True)
         pck5, pck10, pcks = GC_analysis(key, kp3d)
 
         key['pk_5']= pck5
@@ -1095,9 +1125,9 @@ class OpenSimReconstructionAnalysis(dj.Computed):
         
         key['spatial_loss'] = MPJPE
         key['pose_noise'] = Noise
+        key['keypoint_errors'] = kps_MPJPE
 
         self.insert1(key)
-
 
 @schema
 class MJXReconstructionVariableMethodLookup(dj.Lookup):
