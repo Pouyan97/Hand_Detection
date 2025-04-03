@@ -1,24 +1,28 @@
 import argparse
 import os
-from pose_pipeline.utils.jupyter import play,play_grid
-from pose_pipeline.pipeline import BlurredVideo,LiftingPerson,LiftingMethod,TopDownPerson,Video
-from multi_camera.datajoint.multi_camera_dj import PersonKeypointReconstruction,SingleCameraVideo, CalibratedRecording, MultiCameraRecording,PersonKeypointReconstructionMethod
+from multi_camera.datajoint.multi_camera_dj import SingleCameraVideo, CalibratedRecording
 from multi_camera.datajoint.sessions import Recording
 from hand_detection.hand_dj import HandPoseReconstructionMethodLookup,HandPoseReconstructionMethod, HandPoseReconstruction,HandPoseEstimationMethodLookup
-from hand_detection.hand_dj import HandBbox,HandBboxMethod, HandPoseEstimation,HandPoseEstimationMethod,HandPoseEstimationVideo,MJXReconstruction
+from hand_detection.hand_dj import HandBbox,HandBboxMethod, HandPoseEstimation,HandPoseEstimationMethod,HandPoseEstimationVideo
 
-# from hand_detection.hand_dj import schema
-# schema.jobs.delete()
+from hand_detection.hand_dj import schema
+(schema.jobs & 'status = "error"').delete()
 
 def populate_hand_bbox(keys, detection_methods = [1]):
     for detection_method in detection_methods:
         for k in keys:
             k['detection_method'] = detection_method 
-        HandBboxMethod.insert(keys,skip_duplicates=True)
-        print("HandBbox Populate ", 
-              ' '.join((SingleCameraVideo & k).fetch('filename')[0].split('_')[:2]),
+        HandBboxMethod.insert(keys,skip_duplicates=True,ignore_extra_fields=True)
+        print(f"HandBbox {len(keys)} Populate ", 
+              ' '.join((SingleCameraVideo & k).fetch('filename')[0].split('.')[0].split('_')[:-2]),
               detection_method)
-        HandBbox.populate(keys)
+        for k in keys:
+            if detection_method in [1,2]:
+                from pose_pipeline.pipeline import TopDownPerson
+                if len(TopDownPerson & k & "top_down_method=2")> 0:
+                    HandBbox.populate(keys,reserve_jobs=True)
+            else:
+                HandBbox.populate(keys,reserve_jobs=True,suppress_errors=True)
 
 def populate_hand_estimation(keys, detection_methods= [1], estimation_methods = [-1]): 
     for detection_method in detection_methods:
@@ -26,11 +30,18 @@ def populate_hand_estimation(keys, detection_methods= [1], estimation_methods = 
             for k in keys:
                 k['detection_method'] = detection_method 
                 k['estimation_method'] = estimation_method     
-            HandPoseEstimationMethod.insert(keys,skip_duplicates=True)
-            print("Populating Hand Estimation ", 
-                  ' '.join((SingleCameraVideo & k).fetch('filename')[0].split('_')[:2]),
+                if HandBbox & k:
+                    HandPoseEstimationMethod.insert([k],skip_duplicates=True,ignore_extra_fields=True)
+            print(f"Populating {len(keys)} Hand Estimation ", 
+                  ' '.join((SingleCameraVideo & k).fetch('filename')[0].split('.')[0].split('_')[:-2]),
                   detection_method, estimation_method)
-            HandPoseEstimation.populate(keys, reserve_jobs=True)
+            for k in keys:
+                if detection_method in [1,2]:
+                    from pose_pipeline.pipeline import TopDownPerson
+                    if len(TopDownPerson & k & "top_down_method=2")> 0:
+                        HandPoseEstimation.populate(k, reserve_jobs=True)
+                else:
+                    HandPoseEstimation.populate(k, reserve_jobs=True,suppress_errors=True)
 
 def populate_hand_reconstruction(keys, detection_methods=[1], estimation_methods = [-1], reconstruction_methods =[3]):
     for detection_method in detection_methods:
@@ -58,7 +69,7 @@ def main():
 
     args = parser.parse_args()
     
-    # participants = ["yj843","rko5c","8wj64","lgtfc","oxbcl"]
+    # participants = ["yj843","rko5c","8wj64","lgtfc","oxbcl","q8o77","mv9jg", "b2q26"]
     # participants = ["oxbcl"]
     # filenames = ['_%']
     # detection_methods = [2]
@@ -70,7 +81,7 @@ def main():
     estimation_methods = args.estimation_methods
     reconstruction_methods = args.reconstruction_methods
     populate = args.populate
-
+    print(participants, filenames, detection_methods, estimation_methods, reconstruction_methods, populate)
     for participant_id in participants:
         for filename in filenames:
             # participant_videos = (Recording & f'participant_id="{participant_id}"').fetch('KEY')
@@ -83,7 +94,7 @@ def main():
                 if populate == 'estimation' or populate == 'all':
                     populate_hand_estimation(keys,  detection_methods= detection_methods, estimation_methods = estimation_methods)
                 # populate pose reconstruction as well       
-                if populate == 'reconstruction' and populate == 'all':
+                if populate == 'reconstruction':
                     key = (CalibratedRecording & (HandPoseEstimation & keys)).fetch('KEY')
                     populate_hand_reconstruction(key, detection_methods = detection_methods, 
                                                 estimation_methods = estimation_methods, 

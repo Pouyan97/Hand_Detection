@@ -118,7 +118,7 @@ def overlay_hand_keypoints(video, output_file, keypoints, bboxes):
         cap.release()
 
 
-def plot_triangulated_keypoints(key, kp3d = None, only_osim = False,useBlurred = True, crop_bbox = True, camera_id = None):
+def plot_triangulated_keypoints(key, kp3d = None, only_osim = False,useBlurred = True, crop_bbox = False, camera_id = None):
         from hand_detection.hand_dj import HandPoseEstimation, HandBbox, HandPoseReconstruction
         from multi_camera.datajoint.sessions import Recording
         from multi_camera.datajoint.multi_camera_dj import Calibration, MultiCameraRecording, SingleCameraVideo,CalibratedRecording 
@@ -128,7 +128,7 @@ def plot_triangulated_keypoints(key, kp3d = None, only_osim = False,useBlurred =
         from pose_pipeline.utils.visualization import video_overlay, draw_keypoints
         import cv2
 
-        videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key).proj()
+        videos = (HandPoseEstimation * MultiCameraRecording  * SingleCameraVideo & Recording & key & 'estimation_method=0' & 'detection_method=3').proj()
         camera_params= (CalibratedRecording * Calibration & key).fetch1("camera_calibration")
         camera_names = (CalibratedRecording * Calibration & key).fetch1("camera_names")
         video_keys = (videos).fetch("KEY")
@@ -167,7 +167,7 @@ def plot_triangulated_keypoints(key, kp3d = None, only_osim = False,useBlurred =
 
             kp2d_camera = np.asarray((HandPoseEstimation & video_keys[ci]).fetch1("keypoints_2d"))
             kp2d_camera = kp2d_camera.reshape(kp2d_camera.shape[0], -1, kp2d_camera.shape[-1])  
-            moviinds = np.array((3,2,39,40,41,42,43,44,57))
+            moviinds = np.array((3,2,39,41,57,43,44,8,10,26,12,13))
         
             movikeys = video_keys[ci].copy()
             # movikeys.pop('reconstruction_method')
@@ -210,18 +210,17 @@ def plot_triangulated_keypoints(key, kp3d = None, only_osim = False,useBlurred =
                 #     raw_frame, bboxes[frame_idx], target_size=(288, int(288 * 1920 / 1080)), dilate=1.0
                 # )[0]
                 image = raw_frame
+                target_size= (280, int(280 * 1920 / 1080))
+                dilate= 1.4 
+                src = np.asarray([[0,0], [width,height], [0, height]])
                 if crop_bbox:
-                    target_size= (280, int(280 * 1920 / 1080))
-                    dilate= 1.4 
                     # bbox = bboxes[frame_idx]            
                     # bbox = fix_bb_aspect_ratio(bbox, ratio=target_size[0] / target_size[1], dilate=dilate)
-                    
                     # three points on corner of bounding box
                     src = np.asarray([[bbox[0], bbox[1]], [bbox[2] ,bbox[3]], [bbox[0], bbox[3]]])
-                    dst = np.array([[0, 0], [target_size[0], target_size[1]], [0, target_size[1]]])  # .astype(np.float32)
-                    trans = cv2.getAffineTransform(np.float32(src), np.float32(dst))
-                    image = cv2.warpAffine(image, trans, target_size, flags=cv2.INTER_LINEAR)
-
+                dst = np.array([[0, 0], [target_size[0], target_size[1]], [0, target_size[1]]])  # .astype(np.float32)
+                trans = cv2.getAffineTransform(np.float32(src), np.float32(dst))
+                image = cv2.warpAffine(image, trans, target_size, flags=cv2.INTER_LINEAR)
                 return image
             
             def make_frames():
